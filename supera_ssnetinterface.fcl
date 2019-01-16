@@ -1,0 +1,38 @@
+SSNetInterface: {
+  Verbosity:    2
+  ProcessType:  ["ImageMetaMaker","SuperaWire"]
+  ProcessName:  ["ImageMetaMaker","SuperaWire"]
+  ProcessList: {
+    ImageMetaMaker: {
+      MetaConfig: {
+        MinTime:          2400
+        MinWire:          0
+        EventImageRows:   [1008,1008,1008]
+        EventImageCols:   [3456,3456,3456]
+        EventCompRows:    [6,6,6]
+        EventCompCols:    [1,1,1]
+      }
+    }
+    SuperaWire: {
+      Verbosity: 2
+      OutImageLabel:    "wire"
+      LArWireProducer:  "caldata"
+      TimeOffset:       2400      
+    }
+  }
+  UBSplitConfig: {
+    InputProducer: "wire"
+    OutputBBox2DProducer: "detsplit"
+    CropInModule: true
+    OutputCroppedProducer: "detsplit"
+    BBoxPixelHeight: 512
+    BBoxPixelWidth: 832
+    CoveredZWidth: 310
+    FillCroppedYImageCompletely: true
+    DebugImage: false
+    MaxImages: -1
+    RandomizeCrops: false
+    MaxRandomAttempts: 50
+    MinFracPixelsInCrop: -0.0001  
+  }
+}

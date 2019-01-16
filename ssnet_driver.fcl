@@ -1,0 +1,96 @@
+#include "dlprod_fclbase_producers.fcl"
+#include "dlprod_fclbase_analyzers.fcl"
+#include "time_memory_tracker_microboone.fcl"
+
+BEGIN_PROLOG
+
+SSNetIntegration: {
+  module_type:      "SSNetInterface"
+  WireProducerName: "caldata"  
+  SuperaConfigFile: "supera_ssnetinterface.fcl"
+}
+
+UBSSNetIntegration: @local::SSNetIntegration
+
+END_PROLOG
+
+process_name: SSNet
+
+services:
+{
+  #scheduler:    { defaultExceptions: false }
+  #TimeTracker:             @local::microboone_time_tracker
+  MemoryTracker:           @local::microboone_memory_tracker
+  #message:                 @local::microboone_message_services_prod_debug
+  #FileCatalogMetadata:     @local::art_file_catalog_mc
+  @table::microboone_services
+  TFileService: { fileName: "mc_hist.root" }  
+}
+
+#services.TimeTracker.printSummary: false
+#services.TimeTracker.dbOutput: {}
+#services.MemoryTracker.printSummaries: []
+#services.MemoryTracker.includeMallocInfo: false
+services.DetectorPropertiesService.NumberTimeSamples:        6400
+services.DetectorPropertiesService.ReadOutWindowSize:        6400
+services.DetectorClocksService.InheritClockConfig:           false
+services.DetectorClocksService.TriggerOffsetTPC:             -0.400e3
+services.SpaceCharge.EnableSimSpatialSCE: true
+services.SpaceCharge.EnableSimEfieldSCE: true
+
+#services.FileCatalogMetadata.applicationVersion: "develop"
+#services.FileCatalogMetadata.fileType: "mc"
+#services.FileCatalogMetadata.runType: "physics"
+#services.FileCatalogMetadataMicroBooNE: {
+#  FCLName: "run_larlite_maker_mc.fcl"
+#  FCLVersion: "develop"
+#  ProjectName: "LiteMC"
+#  ProjectStage: "LiteMaker"
+#  ProjectVersion: "develop"
+#}
+
+
+source_gen:
+{
+  module_type: EmptyEvent
+  timestampPlugin: { plugin_type: "GeneratedEventTimestamp" }
+  maxEvents:   10          # Number of events to create
+  firstRun:    1        # Run number to use for this file
+  firstEvent:  1           # number of first event in the file
+}
+
+source_reprocess:
+{
+  module_type: RootInput
+  maxEvents:   100000     # Number of events to create
+}
+
+physics:
+{
+ producers: {
+   @table::dlprod_producers
+   ssnet: @local::UBSSNetIntegration   
+ }
+
+ filters: { @table::dlprod_filters }
+
+ analyzers: { @table::dlprod_analyzers }
+
+ ssnetpath: [ssnet]
+
+ stream: []
+ end_paths: []
+ trigger_paths: [ ssnetpath ]
+}
+
+outputs:
+{
+ out1:
+ {
+   module_type: RootOutput
+   fileName:    "larsoft.root" #default file name, can override from command line with -o or --output
+   dataTier:    "larlite"
+   compressionLevel: 1
+ }
+}
+

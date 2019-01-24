@@ -1,18 +1,25 @@
 set( LARCV_LIB -L$ENV{LARCV_LIBDIR} -llarcv )
 set( LARLITE_LIB -L$ENV{LARLITE_LIBDIR} -lLArLite_Analysis -lLArLite_LArUtil -lLArLite_DataFormat -lLArLite_Base )
-set( ZMQ_LIB -L/usr/local/lib -lzmq )
+#set( ZMQ_LIB -L/usr/local/lib -lzmq )
 
 set( UBOONECODE_LIB -L$ENV{UBOONECODE_LIB} )
 
-include_directories ( $ENV{LARCV_COREDIR} $ENV{LARCV_APPDIR} $ENV{LARLITE_COREDIR} )
+set( Torch_DIR $ENV{LIBTORCH_DIR}/share/cmake/Torch )
+set( Caffe2_DIR $ENV{LIBTORCH_DIR}/share/cmake/Caffe2 )
+find_package(Torch REQUIRED)
 
-link_libraries( ${LIB_NAME} -L$ENV{BOOST_LIB} -lboost_system ${ROOTLIB} ${LARCV_LIB} ${LARLITE_LIB} ${ZMQ_LIB} ) # All execs need this.
+include_directories ( $ENV{LARCV_COREDIR} $ENV{LARCV_APPDIR} $ENV{LARLITE_COREDIR} )
+include_directories ( $ENV{LIBTORCH_DIR}/include $ENV{LIBTORCH_DIR}/include/torch/csrc/api/include )
+
+set(CMAKE_CXX_STANDARD 17)
+
+link_libraries( ${LIB_NAME} -L$ENV{BOOST_LIB} -lboost_system ${ROOTLIB} ${LARCV_LIB} ${LARLITE_LIB} ${TORCH_LIBRARIES} ) # All execs need this.
+#link_libraries( -L${LIBTORCH_LIBDIR} -ltorch )
 
 art_make( BASENAME_ONLY
-	  LIBRARY_NAME     uboonecode_uboone_ubdlintegration
+	  LIBRARY_NAME     ubcv_ubdlintegration
 	  LIB_LIBRARIES
-	           larcorealg_Geometry
-	           uboonecode_uboone_LArCVImageMaker	   
+	  	   larcorealg_Geometry
 		   ubcore_Geometry
 		   ubobj_MuCS
 		   larcore_Geometry_Geometry_service
@@ -33,8 +40,8 @@ art_make( BASENAME_ONLY
 		   ${ART_FRAMEWORK_SERVICES_REGISTRY}
 		   ${ART_FRAMEWORK_SERVICES_OPTIONAL}
 		   ${ART_FRAMEWORK_SERVICES_OPTIONAL_TFILESERVICE_SERVICE}
-		   art_Persistency_Common canvas
-		   art_Persistency_Provenance canvas
+                   art_Persistency_Common
+                   art_Persistency_Provenance
 		   art_Utilities canvas
 		   ${MF_MESSAGELOGGER}
 		   
@@ -45,8 +52,8 @@ art_make( BASENAME_ONLY
 		   ${ROOT_GDML}
 		   ${ROOT_BASIC_LIB_LIST}
 
-		   MODULE_LIBRARIES
-		   uboonecode_uboone_LArCVImageMaker
+          MODULE_LIBRARIES 	  	
+	  	   uboonecode_uboone_LArCVImageMaker
 	      	   TFileMetadataMicroBooNE_service
 	      	   FileCatalogMetadataMicroBooNE_service
 		   LArCVMetaMaker_service
@@ -77,10 +84,14 @@ art_make( BASENAME_ONLY
 		   ${ART_FRAMEWORK_SERVICES_REGISTRY}
 		   ${ART_FRAMEWORK_SERVICES_OPTIONAL}
 		   ${ART_FRAMEWORK_SERVICES_OPTIONAL_TFILESERVICE_SERVICE}
-		   art_Persistency_Common canvas
-		   art_Persistency_Provenance canvas
+                   art_Persistency_Common
+                   art_Persistency_Provenance
 		   art_Utilities canvas
 		   ${MF_MESSAGELOGGER}
+
+		   ${LARCV_LIB} 
+		   ${LARLITE_LIB} 
+		   ${TORCH_LIBRARIES}
 		   
 		   ${FHICLCPP}
 		   cetlib_except
@@ -90,19 +101,6 @@ art_make( BASENAME_ONLY
 		   ${ROOT_BASIC_LIB_LIST}
 		)
 
-# simple_plugin(LArCVMetaMaker "service"
-# 	      TFileMetadataMicroBooNE_service
-# 	      FileCatalogMetadataMicroBooNE_service
-# 	      ${ART_FRAMEWORK_SERVICES_SYSTEM_FILECATALOGMETADATA_SERVICE}	      
-# 	      art_Utilities canvas_Utilities
-# 	      ${MF_MESSAGELOGGER}
-# 	      ${MF_UTILITIES}
-# 	      ${FHICLCPP}
-# 	      ${CETLIB}
-# 	      #cetlib cetlib_except
-# 	      ${ROOT_BASIC_LIB_LIST}
-#               BASENAME_ONLY
-# )
 
 # install_headers()
 install_fhicl()

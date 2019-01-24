@@ -1,7 +1,7 @@
 ////////////////////////////////////////////////////////////////////////
-// Class:       SSNetInterface
+// Class:       DLInterface
 // Plugin Type: producer (art v2_05_01)
-// File:        SSNetInterface_module.cc
+// File:        DLInterface_module.cc
 //
 // Generated at Wed Aug 29 05:49:09 2018 by Taritree,,, using cetskelgen
 // from cetlib version v1_21_00.
@@ -32,28 +32,33 @@
 #include "DataFormat/ImageMeta.h"
 #include "DataFormat/ROI.h"
 #include "ImageMod/UBSplitDetector.h"
+#include "TorchUtil/TorchUtils.h"
 //#include "serializer/serializer.h"
 
 // ROOT
 #include "TMessage.h"
 
 // zmq-c++
-#include "zmq.hpp"
+//#include "zmq.hpp"
 
-class SSNetInterface;
+// TORCH
+#include <torch/script.h>
+#include <torch/torch.h>
+
+class DLInterface;
 
 
-class SSNetInterface : public art::EDProducer {
+class DLInterface : public art::EDProducer {
 public:
-  explicit SSNetInterface(fhicl::ParameterSet const & p);
+  explicit DLInterface(fhicl::ParameterSet const & p);
   // The compiler-generated destructor is fine for non-base
   // classes without bare pointers or other resource use.
 
   // Plugins should not be copied or assigned.
-  SSNetInterface(SSNetInterface const &) = delete;
-  SSNetInterface(SSNetInterface &&) = delete;
-  SSNetInterface & operator = (SSNetInterface const &) = delete;
-  SSNetInterface & operator = (SSNetInterface &&) = delete;
+  DLInterface(DLInterface const &) = delete;
+  DLInterface(DLInterface &&) = delete;
+  DLInterface & operator = (DLInterface const &) = delete;
+  DLInterface & operator = (DLInterface &&) = delete;
 
   // Required functions.
   void produce(art::Event & e) override;
@@ -69,14 +74,15 @@ private:
 
   std::string _wire_producer_name;
   std::string _supera_config;
+  std::string _pytorch_net_script;
 
-  zmq::context_t* _context;
-  zmq::socket_t*  _socket; 
+  //zmq::context_t* _context;
+  //zmq::socket_t*  _socket; 
 
 };
 
 
-SSNetInterface::SSNetInterface(fhicl::ParameterSet const & p)
+DLInterface::DLInterface(fhicl::ParameterSet const & p)
 // :
 // Initialize member data here.
 {
@@ -87,10 +93,10 @@ SSNetInterface::SSNetInterface(fhicl::ParameterSet const & p)
   std::string supera_cfg;
   cet::search_path finder("FHICL_FILE_PATH");
   if( !finder.find_file(_supera_config, supera_cfg) )
-    throw cet::exception("SSNetInterface") << "Unable to find supera cfg in "  << finder.to_string() << "\n";
+    throw cet::exception("DLInterface") << "Unable to find supera cfg in "  << finder.to_string() << "\n";
 
   // check cfg content top level
-  larcv::PSet main_cfg = larcv::CreatePSetFromFile(_supera_config).get<larcv::PSet>("SSNetInterface");
+  larcv::PSet main_cfg = larcv::CreatePSetFromFile(_supera_config).get<larcv::PSet>("DLInterface");
 
   // get list of processors
   std::vector<std::string> process_names = main_cfg.get< std::vector<std::string> >("ProcessName");
@@ -124,22 +130,24 @@ SSNetInterface::SSNetInterface(fhicl::ParameterSet const & p)
   }  
   
   if ( !cfgmeta || !cfgwire ) {
-    throw std::runtime_error("SSNetInterface_module needs a configuration for an instance of ImageMetaMaker and SuperaWire");
+    throw std::runtime_error("DLInterface_module needs a configuration for an instance of ImageMetaMaker and SuperaWire");
   }
 
   // configure image splitter
   _imagesplitter.configure( split_cfg );
 
+  _pytorch_net_script = p.get<std::string>("PyTorchNetScript");
+
   // open the zmq socket
-  _context = new zmq::context_t(1);
-  _socket  = new zmq::socket_t( *_context, ZMQ_REQ );
-  char identity[10];
-  sprintf(identity,"larbys00");
-  _socket->setsockopt( ZMQ_IDENTITY, identity, 8 );
-  _socket->connect("tcp://localhost:5559");
+  //_context = new zmq::context_t(1);
+  //_socket  = new zmq::socket_t( *_context, ZMQ_REQ );
+  //char identity[10];
+  //sprintf(identity,"larbys00");
+  //_socket->setsockopt( ZMQ_IDENTITY, identity, 8 );
+  //_socket->connect("tcp://localhost:5559");
 }
 
-void SSNetInterface::produce(art::Event & e)
+void DLInterface::produce(art::Event & e)
 {
 
   //
@@ -169,7 +177,7 @@ void SSNetInterface::produce(art::Event & e)
   // execute wire2image (get the full image)
   //
   std::vector<larcv::Image2D> image_v = supera::Wire2Image2D(meta_v, *data_h, _imagemaker.TimeOffset() );
-  std::cout << "SSNetInterface: images made" << std::endl;
+  std::cout << "DLInterface: images made" << std::endl;
   for (auto& img : image_v ) {
     std::cout << img.meta().dump() << std::endl;
   }
@@ -239,33 +247,52 @@ void SSNetInterface::produce(art::Event & e)
   }
 
   std::cout << "Created " << msg_img_v.size() << " messages. Total image message size: " << img_msg_totsize << " (chars)" << std::endl;
+
+  std::shared_ptr<torch::jit::script::Module> module = torch::jit::load( _pytorch_net_script );
+  if ( module==nullptr )
+    throw cet::exception("DLInterface") << "Could not load model from " << _pytorch_net_script << std::endl;
+  std::cout << "Network Loaded" << std::endl;
+
+  std::vector<torch::jit::IValue> inputs[3];
+  for (int iimg=0; iimg<nimgs; iimg++ ) {
+    //larcv::ROI& roi = splitroi_v[iimg];
+    for (int p=0; p<nplanes; p++) {
+      larcv::Image2D& img = splitimg_v[ iimg*image_v.size() + p ];
+      inputs[p].push_back( larcv::torchutils::as_tensor( img ) );
+    }
+    break;
+  }
+
+  // run the net!
+  at::Tensor output = module->forward(inputs[2]).toTensor();
+  std::cout << "network produced: " << output.size(0) << "," << output.size(1) << "," << output.size(2) << std::endl;
   
   // talk to the socket
-  for ( size_t imsg=0; imsg<msg_img_v.size(); imsg++ ) {
+  // for ( size_t imsg=0; imsg<msg_img_v.size(); imsg++ ) {
 
-    // first the name
-    std::cout << "sending name[" << imsg << "] ... ";
-    _socket->send( msg_name_v[imsg].c_str(), msg_name_v[imsg].length(), ZMQ_SNDMORE );
-    std::cout << " done" << std::endl;
+  //   // first the name
+  //   std::cout << "sending name[" << imsg << "] ... ";
+  //   _socket->send( msg_name_v[imsg].c_str(), msg_name_v[imsg].length(), ZMQ_SNDMORE );
+  //   std::cout << " done" << std::endl;
 
-    // meta
-    std::cout << "sending meta[" << imsg << "] ... ";
-    _socket->send( msg_meta_v[imsg].c_str(), msg_meta_v[imsg].length(), ZMQ_SNDMORE );
-    std::cout << " done" << std::endl;
+  //   // meta
+  //   std::cout << "sending meta[" << imsg << "] ... ";
+  //   _socket->send( msg_meta_v[imsg].c_str(), msg_meta_v[imsg].length(), ZMQ_SNDMORE );
+  //   std::cout << " done" << std::endl;
 
-    // image
-    std::cout << "sending image[" << imsg << "] ... size=" << msg_img_v[imsg].size() << " ... ";
-    if (imsg+1!=msg_img_v.size()) {
-      _socket->send( msg_img_v[imsg].data(), msg_img_v[imsg].size(), ZMQ_SNDMORE );
-      std::cout << " done" << std::endl;
-    }
-    else {
-      _socket->send( msg_img_v[imsg].data(), msg_img_v[imsg].size() );
-      std::cout << "last message sent" << std::endl;
-    }
+  //   // image
+  //   std::cout << "sending image[" << imsg << "] ... size=" << msg_img_v[imsg].size() << " ... ";
+  //   if (imsg+1!=msg_img_v.size()) {
+  //     _socket->send( msg_img_v[imsg].data(), msg_img_v[imsg].size(), ZMQ_SNDMORE );
+  //     std::cout << " done" << std::endl;
+  //   }
+  //   else {
+  //     _socket->send( msg_img_v[imsg].data(), msg_img_v[imsg].size() );
+  //     std::cout << "last message sent" << std::endl;
+  //   }
     
-  }
-  std::cout << "Event messages Sent!" << std::endl;
+  // }
+  // std::cout << "Event messages Sent!" << std::endl;
   
   // zmq::message_t reply;
   // _socket->recv (&reply);
@@ -273,10 +300,10 @@ void SSNetInterface::produce(art::Event & e)
   
 }
 
-void SSNetInterface::beginJob()
+void DLInterface::beginJob()
 {
   _imagemaker.initialize();
 }
 
 
-DEFINE_ART_MODULE(SSNetInterface)
+DEFINE_ART_MODULE(DLInterface)

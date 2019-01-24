@@ -1,4 +1,4 @@
-SSNetInterface: {
+DLInterface: {
   Verbosity:    2
   ProcessType:  ["ImageMetaMaker","SuperaWire"]
   ProcessName:  ["ImageMetaMaker","SuperaWire"]
@@ -16,7 +16,7 @@ SSNetInterface: {
     SuperaWire: {
       Verbosity: 2
       OutImageLabel:    "wire"
-      LArWireProducer:  "caldata"
+      LArWireProducer:  "butcher"
       TimeOffset:       2400      
     }
   }

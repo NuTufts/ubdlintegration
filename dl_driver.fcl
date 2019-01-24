@@ -4,13 +4,14 @@
 
 BEGIN_PROLOG
 
-SSNetIntegration: {
-  module_type:      "SSNetInterface"
+DLInterface: {
+  module_type:      "DLInterface"
   WireProducerName: "caldata"  
+  PyTorchNetScript: "caffe_uresnet.pt"
   SuperaConfigFile: "supera_ssnetinterface.fcl"
 }
 
-UBSSNetIntegration: @local::SSNetIntegration
+UBDLIntegration: @local::DLInterface
 
 END_PROLOG
 
@@ -69,7 +70,7 @@ physics:
 {
  producers: {
    @table::dlprod_producers
-   ssnet: @local::UBSSNetIntegration   
+   ssnet: @local::UBDLIntegration   
  }
 
  filters: { @table::dlprod_filters }

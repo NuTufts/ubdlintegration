@@ -6,7 +6,7 @@ BEGIN_PROLOG
 
 DLInterface: {
   module_type:      "DLInterface"
-  WireProducerName: "caldata"  
+  WireProducerName: "butcher"
   PyTorchNetScript: "caffe_uresnet.pt"
   SuperaConfigFile: "supera_ssnetinterface.fcl"
 }
@@ -73,9 +73,9 @@ physics:
    ssnet: @local::UBDLIntegration   
  }
 
- filters: { @table::dlprod_filters }
+ filters: {}
 
- analyzers: { @table::dlprod_analyzers }
+ analyzers: {}
 
  ssnetpath: [ssnet]
 

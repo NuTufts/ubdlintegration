@@ -27,14 +27,15 @@
 #include "ubcv/LArCVImageMaker/LAr2Image.h"
 
 // larcv
-#include "Base/larcv_base.h"
-#include "Base/PSet.h"
-#include "Base/LArCVBaseUtilFunc.h"
-#include "DataFormat/Image2D.h"
-#include "DataFormat/ImageMeta.h"
-#include "DataFormat/ROI.h"
-#include "ImageMod/UBSplitDetector.h"
-#include "TorchUtil/TorchUtils.h"
+#include "larcv/core/Base/larcv_base.h"
+#include "larcv/core/Base/PSet.h"
+#include "larcv/core/Base/LArCVBaseUtilFunc.h"
+#include "larcv/core/DataFormat/EventImage2D.h"
+#include "larcv/core/DataFormat/Image2D.h"
+#include "larcv/core/DataFormat/ImageMeta.h"
+#include "larcv/core/DataFormat/ROI.h"
+//#include "larcv/app/ImageMod/UBSplitDetector.h"
+//#include "TorchUtil/TorchUtils.h"
 //#include "serializer/serializer.h"
 
 // ROOT
@@ -44,8 +45,8 @@
 //#include "zmq.hpp"
 
 // TORCH
-#include <torch/script.h>
-#include <torch/torch.h>
+//#include <torch/script.h>
+//#include <torch/torch.h>
 
 class DLInterface;
 
@@ -74,14 +75,14 @@ private:
   // larcv::SuperaWire      _imagemaker;
   // supera::ImageMetaMaker _metamaker;
   // larcv::SuperaMetaMaker _metamaker;
-  larcv::UBSplitDetector _imagesplitter;
+  //larcv::UBSplitDetector _imagesplitter;
 
   std::string _wire_producer_name;
   std::string _supera_config;
   std::string _pytorch_net_script;
 
   std::vector<larcv::Image2D> _splitimg_v;              //< container holding split images
-  std::shared_ptr<torch::jit::script::Module> _module;  //< pointer to pytorch network
+  //std::shared_ptr<torch::jit::script::Module> _module;  //< pointer to pytorch network
 
   //zmq::context_t* _context;
   //zmq::socket_t*  _socket; 
@@ -144,7 +145,7 @@ DLInterface::DLInterface(fhicl::ParameterSet const & p)
   _supera.configure(_supera_config);
 
   // configure image splitter
-  _imagesplitter.configure( split_cfg );
+  //_imagesplitter.configure( split_cfg );
 
   // get the path to the saved ssnet
   _pytorch_net_script = p.get<std::string>("PyTorchNetScript");
@@ -208,14 +209,14 @@ void DLInterface::produce(art::Event & e)
   //
   // split image into subregions
   //
-  //std::vector<larcv::Image2D> _splitimg_v;
+  std::vector<larcv::Image2D> _splitimg_v;
   std::vector<larcv::ROI>     splitroi_v;
-  try {
-    _imagesplitter.process( supera_image_v, _splitimg_v, splitroi_v );
-  }
-  catch (std::exception& e ) {
-    throw cet::exception("DLInterface") << "error splitting image: " << e.what() << std::endl;
-  }
+  // try {
+  //   _imagesplitter.process( supera_image_v, _splitimg_v, splitroi_v );
+  // }
+  // catch (std::exception& e ) {
+  //   throw cet::exception("DLInterface") << "error splitting image: " << e.what() << std::endl;
+  // }
   
   //
   // form the message
@@ -223,9 +224,9 @@ void DLInterface::produce(art::Event & e)
   std::cout << "Number of split images: " << _splitimg_v.size() << std::endl;
   std::cout << "Number of split roi: " << splitroi_v.size() << std::endl;  
   
-  int nimgs = _splitimg_v.size()/supera_image_v.size(); // number of images / number of planes
-  int nplanes = supera_image_v.size();
-
+  //int nimgs = _splitimg_v.size()/supera_image_v.size(); // number of images / number of planes
+  //int nplanes = supera_image_v.size();
+  
   //debug
   // nimgs   = 1;
   // nplanes = 1;
@@ -279,16 +280,16 @@ void DLInterface::produce(art::Event & e)
   //   throw cet::exception("DLInterface") << "model loaded as NULL " << _pytorch_net_script << std::endl;
   // std::cout << "Network Loaded" << std::endl;
 
-  std::vector<torch::jit::IValue> inputs[3];
-  for (int iimg=0; iimg<nimgs; iimg++ ) {
-    //larcv::ROI& roi = splitroi_v[iimg];
-    for (int p=0; p<nplanes; p++) {
-      larcv::Image2D& img = _splitimg_v[ iimg*nplanes + p ];
-      inputs[p].push_back( larcv::torchutils::as_tensor( img ).reshape( {1,1,(int)img.meta().cols(),(int)img.meta().rows()} ) );
-    }
-    break;
-  }
-  std::cout << "Converted the data: nimgs[plane2]=" << inputs[2].size() << std::endl;
+  // std::vector<torch::jit::IValue> inputs[3];
+  // for (int iimg=0; iimg<nimgs; iimg++ ) {
+  //   //larcv::ROI& roi = splitroi_v[iimg];
+  //   for (int p=0; p<nplanes; p++) {
+  //     larcv::Image2D& img = _splitimg_v[ iimg*nplanes + p ];
+  //     inputs[p].push_back( larcv::torchutils::as_tensor( img ).reshape( {1,1,(int)img.meta().cols(),(int)img.meta().rows()} ) );
+  //   }
+  //   break;
+  // }
+  // std::cout << "Converted the data: nimgs[plane2]=" << inputs[2].size() << std::endl;
   // std::cout << "  shape=" 
   // 	    << inputs[2].front().size(0) << ","
   // 	    << inputs[2].front().size(1) << ","
@@ -300,15 +301,15 @@ void DLInterface::produce(art::Event & e)
   // dummy.push_back( torch::ones({1, 1, 832, 512}) );
 
   // run the net!
-  at::Tensor output;
-  try {
-    //output = module->forward(dummy).toTensor();
-    output = _module->forward(inputs[2]).toTensor();
-    //std::cout << "network produced: " << output.size(0) << "," << output.size(1) << "," << output.size(2) << std::endl;
-  }
-  catch (std::exception& e) {
-    throw cet::exception("DLInterface") << "module error while running data: " << e.what() << std::endl;
-  }
+  // at::Tensor output;
+  // try {
+  //   //output = module->forward(dummy).toTensor();
+  //   output = _module->forward(inputs[2]).toTensor();
+  //   //std::cout << "network produced: " << output.size(0) << "," << output.size(1) << "," << output.size(2) << std::endl;
+  // }
+  // catch (std::exception& e) {
+  //   throw cet::exception("DLInterface") << "module error while running data: " << e.what() << std::endl;
+  // }
 
   
   // talk to the socket
@@ -356,14 +357,14 @@ void DLInterface::beginJob()
 {
   _supera.initialize();
 
-  try {
-    _module = torch::jit::load( _pytorch_net_script );
-  }
-  catch (...) {
-    throw cet::exception("DLInterface") << "Could not load model from " << _pytorch_net_script << std::endl;
-  }
-  if ( _module==nullptr )
-    throw cet::exception("DLInterface") << "model loaded as NULL " << _pytorch_net_script << std::endl;
+  // try {
+  //   _module = torch::jit::load( _pytorch_net_script );
+  // }
+  // catch (...) {
+  //   throw cet::exception("DLInterface") << "Could not load model from " << _pytorch_net_script << std::endl;
+  // }
+  // if ( _module==nullptr )
+  //   throw cet::exception("DLInterface") << "model loaded as NULL " << _pytorch_net_script << std::endl;
   std::cout << "Network Loaded" << std::endl;
 
 }

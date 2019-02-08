@@ -1,19 +1,20 @@
-set( LARCV_LIB -L$ENV{LARCV_LIBDIR} -llarcv )
+set( LARCV_LIB -L$ENV{LARCV_LIBDIR} -lLArCVCoreBase -lLArCVCoreCPPUtil -lLArCVCoreDataFormat -lLArCVCoreProcessor -lLArCVCorePyUtil -lLArCVCoreJSON -lLArCVAppImageMod )
 set( LARLITE_LIB -L$ENV{LARLITE_LIBDIR} -lLArLite_Analysis -lLArLite_LArUtil -lLArLite_DataFormat -lLArLite_Base )
 #set( ZMQ_LIB -L/usr/local/lib -lzmq )
 
 set( UBOONECODE_LIB -L$ENV{UBOONECODE_LIB} )
 
-set( Torch_DIR $ENV{LIBTORCH_DIR}/share/cmake/Torch )
-set( Caffe2_DIR $ENV{LIBTORCH_DIR}/share/cmake/Caffe2 )
-find_package(Torch REQUIRED)
+#set( Torch_DIR $ENV{LIBTORCH_DIR}/share/cmake/Torch )
+#set( Caffe2_DIR $ENV{LIBTORCH_DIR}/share/cmake/Caffe2 )
+#find_package(Torch REQUIRED)
 
-include_directories ( $ENV{LARCV_COREDIR} $ENV{LARCV_APPDIR} $ENV{LARLITE_COREDIR} )
-include_directories ( $ENV{LIBTORCH_DIR}/include $ENV{LIBTORCH_DIR}/include/torch/csrc/api/include )
+include_directories ( $ENV{LARCV_INCDIR} $ENV{LARLITE_COREDIR} )
+#include_directories ( $ENV{LIBTORCH_DIR}/include $ENV{LIBTORCH_DIR}/include/torch/csrc/api/include )
 
 set(CMAKE_CXX_STANDARD 17)
 
-link_libraries( ${LIB_NAME} -L$ENV{BOOST_LIB} -lboost_system ${ROOTLIB} ${LARCV_LIB} ${LARLITE_LIB} ${TORCH_LIBRARIES} ) # All execs need this.
+#link_libraries( ${LIB_NAME} -L$ENV{BOOST_LIB} -lboost_system ${ROOTLIB} ${LARCV_LIB} ${LARLITE_LIB} ${TORCH_LIBRARIES} ) # All execs need this.
+link_libraries( ${LIB_NAME} -L$ENV{BOOST_LIB} -lboost_system ${ROOTLIB} ${LARCV_LIB} ${LARLITE_LIB} ) 
 #link_libraries( -L${LIBTORCH_LIBDIR} -ltorch )
 
 art_make( BASENAME_ONLY
@@ -91,7 +92,7 @@ art_make( BASENAME_ONLY
 
 		   ${LARCV_LIB} 
 		   ${LARLITE_LIB} 
-		   ${TORCH_LIBRARIES}
+		   #${TORCH_LIBRARIES}
 		   
 		   ${FHICLCPP}
 		   cetlib_except

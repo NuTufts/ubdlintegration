@@ -42,7 +42,7 @@
 #include "TMessage.h"
 
 // zmq-c++
-//#include "zmq.hpp"
+#include "zmq.hpp"
 
 // TORCH
 //#include <torch/script.h>
@@ -57,6 +57,8 @@ public:
   // The compiler-generated destructor is fine for non-base
   // classes without bare pointers or other resource use.
 
+  typedef enum { kServer=0, kPyTorchCPU, kTensorFlowCPU, kDummyServer } NetInterface_t;
+
   // Plugins should not be copied or assigned.
   DLInterface(DLInterface const &) = delete;
   DLInterface(DLInterface &&) = delete;
@@ -69,6 +71,11 @@ public:
   void endJob() override;
   
 private:
+
+  NetInterface_t _interface;
+
+  int runSSNet( art::Event& e );
+  int runDummyServer( art::Event& e );
 
   // Declare member data here.
   larcv::LArCVSuperaDriver _supera;
@@ -84,8 +91,11 @@ private:
   std::vector<larcv::Image2D> _splitimg_v;              //< container holding split images
   //std::shared_ptr<torch::jit::script::Module> _module;  //< pointer to pytorch network
 
-  //zmq::context_t* _context;
-  //zmq::socket_t*  _socket; 
+  zmq::context_t* _context;
+  zmq::socket_t*  _socket; 
+  void openServerSocket();
+  void closeServerSocket();
+  void sendDummyMessage();
 
 };
 
@@ -97,6 +107,26 @@ DLInterface::DLInterface(fhicl::ParameterSet const & p)
   // Call appropriate produces<>() functions here.
   _wire_producer_name = p.get<std::string>("WireProducerName");
   _supera_config      = p.get<std::string>("SuperaConfigFile");
+  std::string inter   = p.get<std::string>("NetInterface");
+  if ( inter=="Server" )
+    _interface = kServer;
+  else if ( inter=="Pytorch" )
+    _interface = kPyTorchCPU;
+  else if ( inter=="TensorFlow" )
+    _interface = kTensorFlowCPU;
+  else if ( inter=="DummyServer" ) // for debugging
+    _interface = kDummyServer;
+  else {
+    throw cet::exception("DLInterface") << "unrecognized network interface, " << inter << ". "
+					<< "choices: { Server, Pytorch, TensorFlow }"
+					<< std::endl;
+  }
+
+  if ( _interface==kPyTorchCPU )
+    throw cet::exception("DLInterface") << "PytorchCPU interface not yet implemented" << std::endl;
+  if ( _interface==kTensorFlowCPU )
+    throw cet::exception("DLInterface") << "TensorFlowCPU interface not yet implemented" << std::endl;
+
 
   std::string supera_cfg;
   cet::search_path finder("FHICL_FILE_PATH");
@@ -150,28 +180,44 @@ DLInterface::DLInterface(fhicl::ParameterSet const & p)
   // get the path to the saved ssnet
   _pytorch_net_script = p.get<std::string>("PyTorchNetScript");
 
-  // open the zmq socket
-  //_context = new zmq::context_t(1);
-  //_socket  = new zmq::socket_t( *_context, ZMQ_REQ );
-  //char identity[10];
-  //sprintf(identity,"larbys00");
-  //_socket->setsockopt( ZMQ_IDENTITY, identity, 8 );
-  //_socket->connect("tcp://localhost:5559");
 
   // verbosity
   int verbosity = p.get<int>("Verbosity",2);
   set_verbosity( (::larcv::msg::Level_t) verbosity );
   _supera.set_verbosity( (::larcv::msg::Level_t) verbosity );
+
 }
 
 void DLInterface::produce(art::Event & e)
 {
 
+  int status = 0;
+  switch (_interface) {
+  case kDummyServer:
+    status = runDummyServer(e);
+    break;
+  case kPyTorchCPU:
+  case kTensorFlowCPU:
+  case kServer:
+    status = runSSNet(e);
+    break;
+  }
+
+  if ( status!=0 )
+    throw cet::exception("DLInterface") << "Error running network" << std::endl;
+}
+
+int DLInterface::runDummyServer( art::Event& e ) {
+  sendDummyMessage();
+  return 0;
+}
+
+int DLInterface::runSSNet( art::Event& e ) {
+
   //
   // set data product
   // 
-  // :wire
-  
+  // :wire  
   art::Handle<std::vector<recob::Wire> > data_h;
   //  handle sub-name
   if(_wire_producer_name.find(" ")<_wire_producer_name.size()) {
@@ -350,28 +396,80 @@ void DLInterface::produce(art::Event & e)
   _supera.driver().io_mutable().clear_entry();
   std::cout << "Remaining: " <<   ((larcv::EventImage2D*) _supera.driver().io_mutable().get_data( larcv::kProductImage2D, "wire" ))->Image2DArray().size() << std::endl;
 
-  
+  return 0;
 }
 
 void DLInterface::beginJob()
 {
   _supera.initialize();
 
-  // try {
-  //   _module = torch::jit::load( _pytorch_net_script );
-  // }
-  // catch (...) {
-  //   throw cet::exception("DLInterface") << "Could not load model from " << _pytorch_net_script << std::endl;
-  // }
-  // if ( _module==nullptr )
-  //   throw cet::exception("DLInterface") << "model loaded as NULL " << _pytorch_net_script << std::endl;
-  std::cout << "Network Loaded" << std::endl;
+  switch( _interface ) {
+  case kServer:
+  case kDummyServer:
+    openServerSocket();
+    break;
+  case kPyTorchCPU:
+    // try {
+    //   _module = torch::jit::load( _pytorch_net_script );
+    // }
+    // catch (...) {
+    //   throw cet::exception("DLInterface") << "Could not load model from " << _pytorch_net_script << std::endl;
+    // }
+    // if ( _module==nullptr )
+    //   throw cet::exception("DLInterface") << "model loaded as NULL " << _pytorch_net_script << std::endl;
+    //std::cout << "Network Loaded" << std::endl;
+    break;
+  case kTensorFlowCPU:
+    break;
+  default:
+    break;
+  }
 
 }
 
 void DLInterface::endJob()
 {
   _supera.finalize();
+}
+
+void DLInterface::openServerSocket() {
+  
+  // open the zmq socket
+  _context = new zmq::context_t(1);
+  _socket  = new zmq::socket_t( *_context, ZMQ_REQ );
+  char identity[10];
+  sprintf(identity,"larbys00");
+  _socket->setsockopt( ZMQ_IDENTITY, identity, 8 );
+
+  if ( _interface==kDummyServer ) 
+    _socket->connect("tcp://localhost:5555");
+  else
+    throw cet::exception("DLInterface") << "connection for gpu-server not defined yet" << std::endl;
+
+}
+
+void DLInterface::closeServerSocket() {
+  // close zmq socket
+  delete _socket;
+  delete _context;
+}
+
+void DLInterface::sendDummyMessage() {
+
+  //  Do 10 requests, waiting each time for a response
+  for (int request_nbr = 0; request_nbr != 10; request_nbr++) {
+    zmq::message_t request (5);
+    memcpy (request.data (), "Hello", 5);
+    std::cout << "Sending Hello " << request_nbr << "…" << std::endl;
+    _socket->send (request);
+    
+    //  Get the reply.
+    zmq::message_t reply;
+    _socket->recv (&reply);
+    std::cout << "Received World " << request_nbr << std::endl;
+  }
+  
+  std::cout << "end of sendDummyMessage()" << std::endl;
 }
 
 

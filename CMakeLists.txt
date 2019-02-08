@@ -8,14 +8,20 @@ set( UBOONECODE_LIB -L$ENV{UBOONECODE_LIB} )
 #set( Caffe2_DIR $ENV{LIBTORCH_DIR}/share/cmake/Caffe2 )
 #find_package(Torch REQUIRED)
 
+set(CMAKE_CXX_STANDARD 17)
+
+set( ZeroMQ_DIR "$ENV{MRB_INSTALL}/libzmq/install/share/cmake/ZeroMQ" )
+find_package(ZeroMQ REQUIRED CONFIG)
+
+set( cppzmq_DIR "$ENV{MRB_INSTALL}/cppzmq/install/share/cmake/cppzmq" )
+find_package(cppzmq REQUIRED CONFIG)
+
 include_directories ( $ENV{LARCV_INCDIR} $ENV{LARLITE_COREDIR} )
 #include_directories ( $ENV{LIBTORCH_DIR}/include $ENV{LIBTORCH_DIR}/include/torch/csrc/api/include )
 
-set(CMAKE_CXX_STANDARD 17)
-
 #link_libraries( ${LIB_NAME} -L$ENV{BOOST_LIB} -lboost_system ${ROOTLIB} ${LARCV_LIB} ${LARLITE_LIB} ${TORCH_LIBRARIES} ) # All execs need this.
 link_libraries( ${LIB_NAME} -L$ENV{BOOST_LIB} -lboost_system ${ROOTLIB} ${LARCV_LIB} ${LARLITE_LIB} ) 
-#link_libraries( -L${LIBTORCH_LIBDIR} -ltorch )
+
 
 art_make( BASENAME_ONLY
 	  LIBRARY_NAME     ubcv_ubdlintegration
@@ -101,6 +107,8 @@ art_make( BASENAME_ONLY
 		   ${ROOT_GDML}
 		   ${ROOT_BASIC_LIB_LIST}
 		)
+
+target_link_libraries( DLInterface_module cppzmq )
 
 
 # install_headers()

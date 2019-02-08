@@ -7,8 +7,9 @@ BEGIN_PROLOG
 DLInterface: {
   module_type:      "DLInterface"
   WireProducerName: "butcher"
-  PyTorchNetScript: "caffe_uresnet.pt"
+  NetInterface:     "DummyServer"
   SuperaConfigFile: "supera_ssnetinterface.fcl"
+  PyTorchNetScript: "caffe_uresnet.pt"
 }
 
 UBDLIntegration: @local::DLInterface

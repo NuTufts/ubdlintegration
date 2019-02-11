@@ -279,35 +279,29 @@ void DLInterface::produce(art::Event & e)
   //   throw cet::exception("DLInterface") << "model loaded as NULL " << _pytorch_net_script << std::endl;
   // std::cout << "Network Loaded" << std::endl;
 
-  std::vector<torch::jit::IValue> inputs[3];
+
   for (int iimg=0; iimg<nimgs; iimg++ ) {
     //larcv::ROI& roi = splitroi_v[iimg];
+    std::cout << " imgset[" << iimg << "] run net" << std::endl;
+    std::vector<torch::jit::IValue> inputs[3];
     for (int p=0; p<nplanes; p++) {
       larcv::Image2D& img = _splitimg_v[ iimg*nplanes + p ];
       inputs[p].push_back( larcv::torchutils::as_tensor( img ).reshape( {1,1,(int)img.meta().cols(),(int)img.meta().rows()} ) );
     }
-    break;
-  }
-  std::cout << "Converted the data: nimgs[plane2]=" << inputs[2].size() << std::endl;
-  // std::cout << "  shape=" 
-  // 	    << inputs[2].front().size(0) << ","
-  // 	    << inputs[2].front().size(1) << ","
-  // 	    << inputs[2].front().size(2) << ","
-  // 	    << inputs[2].front().size(3)
-  // 	    << std::endl;
+    std::cout << "Converted the data: nimgs[plane2]=" << inputs[2].size() << std::endl;
 
-  // std::vector<torch::jit::IValue> dummy;
-  // dummy.push_back( torch::ones({1, 1, 832, 512}) );
-
-  // run the net!
-  at::Tensor output;
-  try {
-    //output = module->forward(dummy).toTensor();
-    output = _module->forward(inputs[2]).toTensor();
-    //std::cout << "network produced: " << output.size(0) << "," << output.size(1) << "," << output.size(2) << std::endl;
-  }
-  catch (std::exception& e) {
-    throw cet::exception("DLInterface") << "module error while running data: " << e.what() << std::endl;
+    // run the net!
+    for ( int p=0; p<nplanes; p++ ) {
+      at::Tensor output;
+      try {
+	//output = module->forward(dummy).toTensor();
+	output = _module->forward(inputs[2]).toTensor();
+	//std::cout << "network produced: " << output.size(0) << "," << output.size(1) << "," << output.size(2) << std::endl;
+      }
+      catch (std::exception& e) {
+	throw cet::exception("DLInterface") << "module error while running data: " << e.what() << std::endl;
+      }
+    }
   }
 
   

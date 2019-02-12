@@ -258,7 +258,8 @@ void DLInterface::produce(art::Event & e)
   larcv::IOManager& io = _supera.driver().io_mutable();
   
   // save the wholeview images back to the supera IO
-  auto ev_imgs  = (larcv::EventImage2D*) io.get_data( larcv::kProductImage2D, "wire" );
+  larcv::EventImage2D* ev_imgs  = (larcv::EventImage2D*) io.get_data( larcv::kProductImage2D, "wire" );
+  std::cout << "wire eventimage2d=" << ev_imgs << std::endl;
   ev_imgs->Emplace( std::move(wholeview_v) );
 
   // save detsplit input
@@ -277,6 +278,14 @@ void DLInterface::produce(art::Event & e)
 
   // save merged out
   
+  // save entry
+  std::cout << "saving entry" << std::endl;
+  io.save_entry();
+  
+  // we clear entries ourselves
+  std::cout << "clearing entry" << std::endl;
+  io.clear_entry();
+
 }
 
 int DLInterface::runDummyServer( art::Event& e ) {
@@ -314,11 +323,17 @@ int DLInterface::runSupera( art::Event& e, std::vector<larcv::Image2D>& wholevie
   _supera.SetDataPointer(*data_h,_wire_producer_name);
 
   // execute supera
-  _supera.process(e.id().run(),e.id().subRun(),e.id().event(), false);
+  bool autosave_entry = false;
+  std::cout << "process event: (" << e.id().run() << "," << e.id().subRun() << "," << e.id().event() << ")" << std::endl;
+  _supera.process(e.id().run(),e.id().subRun(),e.id().event(), autosave_entry);
 
   // get the images
   auto ev_imgs  = (larcv::EventImage2D*) _supera.driver().io_mutable().get_data( larcv::kProductImage2D, "wire" );
   ev_imgs->Move( wholeview_imgs );
+  // wholeview_imgs.clear();
+  // for ( auto const& img : ev_imgs->Image2DArray() ) {
+  //   wholeview_imgs.push_back( img );
+  // }
   
   return wholeview_imgs.size();
 }
@@ -578,6 +593,8 @@ void DLInterface::beginJob()
   case kTensorFlowCPU:
     break;
   default:
+    _context = nullptr;
+    _socket  = nullptr;
     break;
   }
 
@@ -591,7 +608,10 @@ void DLInterface::beginJob()
  */
 void DLInterface::endJob()
 {
+  std::cout << "DLInterface::endJob -- start" << std::endl;
+  std::cout << "DLinterface::endJob -- finalize IOmanager" << std::endl;
   _supera.finalize();
+  std::cout << "DLInterface::endJob -- finished" << std::endl;
 }
 
 /**
@@ -625,6 +645,8 @@ void DLInterface::loadNetwork_PyTorchCPU() {
  * 
  */
 void DLInterface::openServerSocket() {
+
+  std::cout << "DLInterface: open server socket" << std::endl;
   
   // open the zmq socket
   _context = new zmq::context_t(1);
@@ -647,9 +669,17 @@ void DLInterface::openServerSocket() {
  * 
  */
 void DLInterface::closeServerSocket() {
+
+  std::cout << "DLInterface: close server socket" << std::endl;
+
   // close zmq socket
-  delete _socket;
-  delete _context;
+  if ( _socket )
+    delete _socket;
+  if ( _context )
+    delete _context;
+
+  _socket  = nullptr;
+  _context = nullptr;
 }
 
 /**
@@ -659,6 +689,8 @@ void DLInterface::closeServerSocket() {
  * 
  */
 void DLInterface::sendDummyMessage() {
+
+  std::cout << "DLInterface: close server socket" << std::endl;
 
   //  Do 10 requests, waiting each time for a response
   for (int request_nbr = 0; request_nbr != 10; request_nbr++) {

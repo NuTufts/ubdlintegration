@@ -34,9 +34,8 @@
 #include "larcv/core/DataFormat/Image2D.h"
 #include "larcv/core/DataFormat/ImageMeta.h"
 #include "larcv/core/DataFormat/ROI.h"
-//#include "larcv/app/ImageMod/UBSplitDetector.h"
-//#include "TorchUtil/TorchUtils.h"
-//#include "serializer/serializer.h"
+#include "larcv/core/json/json_utils.h"
+#include "ublarcvapp/UBImageMod/UBSplitDetector.h"
 
 // ROOT
 #include "TMessage.h"
@@ -44,9 +43,14 @@
 // zmq-c++
 #include "zmq.hpp"
 
+#ifdef HAS_TORCH
 // TORCH
-//#include <torch/script.h>
-//#include <torch/torch.h>
+#include <torch/script.h>
+#include <torch/torch.h>
+
+// larcv torch utils
+#include "larcv/core/TorchUtil/TorchUtils.h"
+#endif
 
 class DLInterface;
 
@@ -72,37 +76,76 @@ public:
   
 private:
 
-  NetInterface_t _interface;
-
-  int runSSNet( art::Event& e );
-  int runDummyServer( art::Event& e );
-
   // Declare member data here.
-  larcv::LArCVSuperaDriver _supera;
-  // larcv::SuperaWire      _imagemaker;
-  // supera::ImageMetaMaker _metamaker;
-  // larcv::SuperaMetaMaker _metamaker;
-  //larcv::UBSplitDetector _imagesplitter;
 
+  // supera/image formation
+  larcv::LArCVSuperaDriver _supera;  
   std::string _wire_producer_name;
   std::string _supera_config;
-  std::string _pytorch_net_script;
+  int runSupera( art::Event& e, std::vector<larcv::Image2D>& wholeview_imgs );
 
+  // image processing/splitting/cropping
+  larcv::UBSplitDetector _imagesplitter;
+  bool        _save_detsplit_input;
+  bool        _save_detsplit_output;
   std::vector<larcv::Image2D> _splitimg_v;              //< container holding split images
-  //std::shared_ptr<torch::jit::script::Module> _module;  //< pointer to pytorch network
+  int runWholeViewSplitter( const std::vector<larcv::Image2D>& wholeview_v, 
+			    std::vector<larcv::Image2D>& splitimg_v,
+			    std::vector<larcv::ROI>&     splitroi_v );
+  
+  // the network interface to run
+  NetInterface_t _interface;
 
+  // interface: pytorch cpu
+  std::string _pytorch_net_script;
+#ifdef HAS_TORCH
+  std::shared_ptr<torch::jit::script::Module> _module;  //< pointer to pytorch network
+#endif
+  void loadNetwork_PyTorchCPU();
+  int runPyTorchCPU( const std::vector<larcv::Image2D>& wholeview_v,
+		     std::vector<larcv::Image2D>& splitimg_v, 
+		     std::vector<larcv::ROI>& splitroi_v, 
+		     std::vector<larcv::Image2D>& netout_v );
+  
+
+  // interface: server (common)
   zmq::context_t* _context;
   zmq::socket_t*  _socket; 
   void openServerSocket();
   void closeServerSocket();
+  size_t serializeImages( const size_t nplanes,
+			  const std::vector<larcv::Image2D>& img_v,   
+			  std::vector< std::vector<unsigned char> >& msg_img_v,
+			  std::vector<std::string>& msg_meta_v,
+			  std::vector<std::string>& msg_name_v );
+
+
+  // interface: ssnet gpu server
+  int runSSNetServer( const std::vector<larcv::Image2D>& wholeview_v, 
+		      std::vector<larcv::Image2D>& splitimg_v, 
+		      std::vector<larcv::ROI>& splitroi_v, 
+		      std::vector<larcv::Image2D>& netout_v );
+
+  // interface: dummy server (for debug)
+  int runDummyServer( art::Event& e );
   void sendDummyMessage();
+
+  // merger/post-processing
+  void mergeSSNetOutput( const std::vector<larcv::Image2D>& wholeview_v, 
+			 const std::vector<larcv::ROI>& splitroi_v, 
+			 const std::vector<larcv::Image2D>& netout_v,
+			 std::vector<larcv::Image2D>& merged );
+  
 
 };
 
-
+/**
+ * constructor: configuration module
+ *
+ */
 DLInterface::DLInterface(fhicl::ParameterSet const & p)
   : larcv::larcv_base("DLInterface_module")
-// Initialize member data here.
+    // Initialize member data here.
 {
   // Call appropriate produces<>() functions here.
   _wire_producer_name = p.get<std::string>("WireProducerName");
@@ -127,6 +170,9 @@ DLInterface::DLInterface(fhicl::ParameterSet const & p)
   if ( _interface==kTensorFlowCPU )
     throw cet::exception("DLInterface") << "TensorFlowCPU interface not yet implemented" << std::endl;
 
+  _save_detsplit_input  = p.get<bool>("SaveDetsplitImagesInput");
+  _save_detsplit_output = p.get<bool>("SaveNetOutSplitImagesOutput");
+
 
   std::string supera_cfg;
   cet::search_path finder("FHICL_FILE_PATH");
@@ -146,36 +192,11 @@ DLInterface::DLInterface(fhicl::ParameterSet const & p)
     throw std::runtime_error( "Number of Supera ProcessName(s) and ProcessTypes(s) is not the same." );
   }
 
-  // bool cfgmeta = false;
-  // bool cfgwire = false;
-  // for (int i=0; i<(int)process_names.size(); i++) {
-  //   std::string name = process_names[i];
-  //   std::string type = process_types[i];
-
-  //   if ( !process_list.contains_pset(name) ) {
-  //     std::cout << "Not in ProcessList: " << name << "/" << type << std::endl;
-  //     continue;
-  //   }
-
-  //   if ( type=="SuperaWire" ) {
-  //     cfgwire = true;
-  //     _imagemaker.configure( process_list.get<larcv::PSet>(name) );
-  //   }
-  //   else if ( type=="ImageMetaMaker" ) {
-  //     cfgmeta = true;
-  //     _metamaker.configure( process_list.get<larcv::PSet>(name) );
-  //   }
-  // }  
-  
-  // if ( !cfgmeta || !cfgwire ) {
-  //   throw std::runtime_error("DLInterface_module needs a configuration for an instance of ImageMetaMaker and SuperaWire");
-  // }
-
-  // configure supera
+  // configure supera (convert art::Event::CalMod -> Image2D)
   _supera.configure(_supera_config);
 
-  // configure image splitter
-  //_imagesplitter.configure( split_cfg );
+  // configure image splitter (fullimage into detsplit image)
+  _imagesplitter.configure( split_cfg );
 
   // get the path to the saved ssnet
   _pytorch_net_script = p.get<std::string>("PyTorchNetScript");
@@ -188,23 +209,74 @@ DLInterface::DLInterface(fhicl::ParameterSet const & p)
 
 }
 
+/** 
+ * produce DL network products
+ *
+ */
 void DLInterface::produce(art::Event & e)
 {
+
+  // get the wholeview images for the network
+  std::vector<larcv::Image2D> wholeview_v;
+  int nwholeview_imgs = runSupera( e, wholeview_v );
+  std::cout << "number of wholeview images: " << nwholeview_imgs << std::endl;
+
+  // we often have to pre-process the image, e.g. split it.
+  // eventually have options here. But for now, wholeview splitter
+  std::vector<larcv::Image2D> splitimg_v;
+  std::vector<larcv::ROI>     splitroi_v;
+  int nsplit_imgs = runWholeViewSplitter( wholeview_v, splitimg_v, splitroi_v );
+  std::cout << "number of split images: " << nsplit_imgs << std::endl;
+
+  // containers for outputs
+  std::vector<larcv::Image2D> netout_v;
+
+  // run network (or not)
 
   int status = 0;
   switch (_interface) {
   case kDummyServer:
+  case kTensorFlowCPU:
     status = runDummyServer(e);
     break;
   case kPyTorchCPU:
-  case kTensorFlowCPU:
+    status = runPyTorchCPU( wholeview_v, splitimg_v, splitroi_v, netout_v );
+    break;
   case kServer:
-    status = runSSNet(e);
+    status = runSSNetServer( wholeview_v, splitimg_v, splitroi_v, netout_v );
     break;
   }
 
   if ( status!=0 )
     throw cet::exception("DLInterface") << "Error running network" << std::endl;
+
+  // merge the output
+  std::vector<larcv::Image2D> merged;
+  mergeSSNetOutput( wholeview_v, splitroi_v, netout_v, merged );
+
+  // prepare the output
+  larcv::IOManager& io = _supera.driver().io_mutable();
+  
+  // save the wholeview images back to the supera IO
+  auto ev_imgs  = (larcv::EventImage2D*) io.get_data( larcv::kProductImage2D, "wire" );
+  ev_imgs->Emplace( std::move(wholeview_v) );
+
+  // save detsplit input
+  larcv::EventImage2D* ev_splitdet = nullptr;
+  if ( _save_detsplit_input ) {
+    ev_splitdet = (larcv::EventImage2D*) io.get_data( larcv::kProductImage2D, "detsplit" );
+    ev_splitdet->Emplace( std::move(splitimg_v) );
+  }
+
+  // save detsplit output
+  larcv::EventImage2D* ev_netout_split = nullptr;
+  if ( _save_detsplit_output ) {
+    ev_netout_split = (larcv::EventImage2D*) io.get_data( larcv::kProductImage2D, "netoutsplit" );
+    ev_netout_split->Emplace( std::move(netout_v) );
+  }
+
+  // save merged out
+  
 }
 
 int DLInterface::runDummyServer( art::Event& e ) {
@@ -212,7 +284,17 @@ int DLInterface::runDummyServer( art::Event& e ) {
   return 0;
 }
 
-int DLInterface::runSSNet( art::Event& e ) {
+/**
+ * have supera make larcv images
+ *
+ * get recob::Wire from art::Event, pass it to supera
+ * the _supera object will contain the larcv IOManager which will have images stored
+ *
+ * @param[in] e art::Event with wire data
+ * @return int number of images to process by network
+ *
+ */
+int DLInterface::runSupera( art::Event& e, std::vector<larcv::Image2D>& wholeview_imgs ) {
 
   //
   // set data product
@@ -234,128 +316,173 @@ int DLInterface::runSSNet( art::Event& e ) {
   // execute supera
   _supera.process(e.id().run(),e.id().subRun(),e.id().event(), false);
 
+  // get the images
   auto ev_imgs  = (larcv::EventImage2D*) _supera.driver().io_mutable().get_data( larcv::kProductImage2D, "wire" );
-  auto& supera_image_v = ev_imgs->Image2DArray(); 
+  ev_imgs->Move( wholeview_imgs );
+  
+  return wholeview_imgs.size();
+}
 
+/**
+ * take wholeview images (one per plane in vector) and turn into subimage crops (many per plane in vector)
+ *
+ * passes the images into the UBSplitDetector object (_imagesplitter)
+ *
+ * @param[in] wholeview_v vector of whole-view images. one per plane.
+ * @param[inout] splitimg_v vector of cropped images. many per plane.
+ * @param[inout] splitroi_v vector ROIs for split images. many  per plane.
+ *
+ **/
+int DLInterface::runWholeViewSplitter( const std::vector<larcv::Image2D>& wholeview_v, 
+				       std::vector<larcv::Image2D>& splitimg_v,
+				       std::vector<larcv::ROI>&     splitroi_v ) {
+  
+  // //
+  // // define the image meta and image
+  // //
+  // std::vector<larcv::ImageMeta> meta_v;
+  // for ( auto const& img : wholeview_v ) {
+  //   meta_v.push_back( img.meta() );
+  // }
+  
   //
-  // define the image meta and image
-  //
-  std::vector<larcv::ImageMeta> meta_v;
-  //std::vector<larcv::Image2D> image_v;
-  for ( auto const& img : supera_image_v ) {
-    meta_v.push_back( img.meta() );
-    //image_v.push_back( img );
-  }
-
-  std::cout << "DLInterface: superawire images made " << supera_image_v.size() << std::endl;
-  for (auto& img : supera_image_v ) {
+  // debug: dump the meta definitions for the wholeview images
+  std::cout << "DLInterface: superawire images made " << wholeview_v.size() << std::endl;
+  for (auto& img : wholeview_v ) {
     std::cout << img.meta().dump() << std::endl;
   }  
   
   //
   // split image into subregions
   //
-  std::vector<larcv::Image2D> _splitimg_v;
-  std::vector<larcv::ROI>     splitroi_v;
-  // try {
-  //   _imagesplitter.process( supera_image_v, _splitimg_v, splitroi_v );
-  // }
-  // catch (std::exception& e ) {
-  //   throw cet::exception("DLInterface") << "error splitting image: " << e.what() << std::endl;
-  // }
+  splitimg_v.clear();
+  splitroi_v.clear();
+  try {
+    _imagesplitter.process( wholeview_v, splitimg_v, splitroi_v );
+  }
+  catch (std::exception& e ) {
+    throw cet::exception("DLInterface") << "error splitting image: " << e.what() << std::endl;
+  }
+
+  return splitimg_v.size();
+
+}
+
+/**
+ * 
+ * serialize image into binary-json message + strings describing image meta
+ *
+ * @param[in] nplanes number of input plane images
+ * @param[in] img_v individual (cropped/split) images to serialize
+ * @param[inout] msg_img_v binary json message for each image
+ * @param[inout] msg_meta_v string describing meta
+ * @param[inout] msg_name_v string describing name
+ * 
+ */
+size_t DLInterface::serializeImages( const size_t nplanes,
+				     const std::vector<larcv::Image2D>& img_v,   
+				     std::vector< std::vector<unsigned char> >& msg_img_v,
+				     std::vector<std::string>& msg_meta_v,
+				     std::vector<std::string>& msg_name_v ) {
   
-  //
-  // form the message
-  //
-  std::cout << "Number of split images: " << _splitimg_v.size() << std::endl;
-  std::cout << "Number of split roi: " << splitroi_v.size() << std::endl;  
+  size_t nimgs = img_v.size();
+  size_t nsets = nimgs/nplanes;
+  msg_img_v.resize(  nimgs );
+  msg_meta_v.resize( nimgs );
+  msg_name_v.resize( nimgs );
+
+  size_t img_msg_totsize = 0.;
   
-  //int nimgs = _splitimg_v.size()/supera_image_v.size(); // number of images / number of planes
-  //int nplanes = supera_image_v.size();
-  
-  //debug
-  // nimgs   = 1;
-  // nplanes = 1;
+  for (size_t iset=0; iset<nsets; iset++ ) {
+    for (size_t p=0; p<nplanes; p++) {
+      size_t iimg = nplanes*iset + p;
+      const larcv::Image2D& img = img_v[ iimg ];
 
-  // std::vector<std::string> msg_meta_v(nimgs*nplanes);
-  // std::vector<std::string> msg_name_v(nimgs*nplanes);
-  // std::vector< std::vector<unsigned char> > msg_img_v(nimgs*nplanes);
-
-  // int img_msg_totsize = 0;
-
- 
-  // for (int iimg=0; iimg<nimgs; iimg++ ) {
-  //   //larcv::ROI& roi = splitroi_v[iimg];
-  //   for (int p=0; p<nplanes; p++) {
-  //     larcv::Image2D& img = _splitimg_v[ iimg*image_v.size() + p ];
-
-  //     char zname[50];
-  //     sprintf( zname, "croicropped_p%d_iimg%d", p, iimg );
-
-  //     std::string msg_name = zname;
-  //     std::string msg_meta = img.meta().dump();
-
-  //     // TMessage msg_img;
-  //     // msg_img.WriteObject( &img );
-  //     // std::string str_msg_img = msg_img.Buffer();
-  //     std::vector<unsigned char> data;
-  //     //zpp::serializer::memory_output_archive out(data);
-  //     //out( img );
-
-  //     img_msg_totsize += data.size();
+      char zname[100];
+      sprintf( zname, "croicropped_p%d_iset%d_iimg%d", (int)p, (int)iset, (int)iimg );
       
-  //     msg_name_v[iimg*image_v.size()+p] = msg_name;
-  //     msg_meta_v[iimg*image_v.size()+p] = msg_meta;
-  //     msg_img_v[iimg*image_v.size()+p]  = data;
-  //   }
-  // }
+      std::string msg_name = zname;
+      std::string msg_meta = img.meta().dump();
 
-  //std::cout << "Created " << msg_img_v.size() << " messages. Total image message size: " << img_msg_totsize << " (chars)" << std::endl;
-
-
-  std::cout << "Loading network from " << _pytorch_net_script << " .... " << std::endl;
+      msg_img_v[ iimg ]  = larcv::json::as_bson( img );
+      msg_meta_v[ iimg ] = img.meta().dump();
+      msg_name_v[ iimg ] = zname;
+      
+      img_msg_totsize += msg_img_v[iimg].size();
+    }
+  }
   
-  //std::shared_ptr<torch::jit::script::Module> module = nullptr;
-  // try {
-  //   module = torch::jit::load( _pytorch_net_script );
-  // }
-  // catch (...) {
-  //   throw cet::exception("DLInterface") << "Could not load model from " << _pytorch_net_script << std::endl;
-  // }
-  // if ( module==nullptr )
-  //   throw cet::exception("DLInterface") << "model loaded as NULL " << _pytorch_net_script << std::endl;
-  // std::cout << "Network Loaded" << std::endl;
+  std::cout << "Created " << msg_img_v.size() << " messages. Total image message size: " << img_msg_totsize << " (chars)" << std::endl;
+  return img_msg_totsize;
+}
 
-  // std::vector<torch::jit::IValue> inputs[3];
-  // for (int iimg=0; iimg<nimgs; iimg++ ) {
-  //   //larcv::ROI& roi = splitroi_v[iimg];
-  //   for (int p=0; p<nplanes; p++) {
-  //     larcv::Image2D& img = _splitimg_v[ iimg*nplanes + p ];
-  //     inputs[p].push_back( larcv::torchutils::as_tensor( img ).reshape( {1,1,(int)img.meta().cols(),(int)img.meta().rows()} ) );
-  //   }
-  //   break;
-  // }
-  // std::cout << "Converted the data: nimgs[plane2]=" << inputs[2].size() << std::endl;
-  // std::cout << "  shape=" 
-  // 	    << inputs[2].front().size(0) << ","
-  // 	    << inputs[2].front().size(1) << ","
-  // 	    << inputs[2].front().size(2) << ","
-  // 	    << inputs[2].front().size(3)
-  // 	    << std::endl;
+/**
+ * 
+ * run ssnet via GPU server
+ *
+ * 
+ */
+int DLInterface::runSSNetServer( const std::vector<larcv::Image2D>& wholeview_v, 
+				 std::vector<larcv::Image2D>& splitimg_v, 
+				 std::vector<larcv::ROI>& splitroi_v, 
+				 std::vector<larcv::Image2D>& netout_v ) {
+  int status = 0;
+  return status;
+}
 
-  // std::vector<torch::jit::IValue> dummy;
-  // dummy.push_back( torch::ones({1, 1, 832, 512}) );
 
-  // run the net!
-  // at::Tensor output;
-  // try {
-  //   //output = module->forward(dummy).toTensor();
-  //   output = _module->forward(inputs[2]).toTensor();
-  //   //std::cout << "network produced: " << output.size(0) << "," << output.size(1) << "," << output.size(2) << std::endl;
-  // }
-  // catch (std::exception& e) {
-  //   throw cet::exception("DLInterface") << "module error while running data: " << e.what() << std::endl;
-  // }
+/**
+ * 
+ * run networking using pytorch CPU C++ interface
+ *
+ * 
+ */
+int DLInterface::runPyTorchCPU( const std::vector<larcv::Image2D>& wholeview_v, 
+				std::vector<larcv::Image2D>& splitimg_v, 
+				std::vector<larcv::ROI>& splitroi_v, 
+				std::vector<larcv::Image2D>& netout_v ) {
+
+#ifdef HAS_TORCH
+
+  int status = 0;
+  size_t nplanes = whileview_v.size();
+  size_t nimgs   = splitimg_v.size();
+  size_t nsets   = nimgs/nplanes;
+
+  std::vector<torch::jit::IValue> inputs;
+  inputs.reserve(nimgs+1);
+  for (int iimg=0; iimg<nimgs; iimg++ ) {
+    //larcv::ROI& roi = splitroi_v[iimg];
+    larcv::Image2D& img = splitimg_v[ iimg ];
+    inputs.push_back( larcv::torchutils::as_tensor( img ).reshape( {1,1,(int)img.meta().cols(),(int)img.meta().rows()} ) );
+  }
+  // debug
+  std::cout << "Converted the data: nimgs[plane2]=" << inputs.size() << std::endl;
+  std::cout << "  shape=" 
+  	    << inputs.front().size(0) << ","
+  	    << inputs.front().size(1) << ","
+  	    << inputs.front().size(2) << ","
+  	    << inputs.front().size(3)
+  	    << std::endl;
+
+
+  //run the net!
+  int iimg = 0;
+  netout_v.clear();
+  netout_v.reserve( nimgs+1 );
+  for ( auto& data : inputs ) {
+    at::Tensor output;
+    try {
+      output = _module->forward(data).toTensor();
+      //std::cout << "network produced: " << output.size(0) << "," << output.size(1) << "," << output.size(2) << std::endl;
+    }
+    catch (std::exception& e) {
+      throw cet::exception("DLInterface") << "module error while running data: " << e.what() << std::endl;
+    }
+    // as img2d
+    larcv::Image2D imgout( splitimg_v[iimg].meta() );
+    netout_v.emplace_back( std::move(imgout) );
+  }
 
   
   // talk to the socket
@@ -389,16 +516,43 @@ int DLInterface::runSSNet( art::Event& e ) {
   // _socket->recv (&reply);
   // std::cout << "Received: " << reply.data() << std::endl;
 
-  std::cout << "saving entry" << std::endl;
-  _supera.driver().io_mutable().save_entry();
+  // std::cout << "saving entry" << std::endl;
+  // _supera.driver().io_mutable().save_entry();
   
-  std::cout << "clearing entry" << std::endl;
-  _supera.driver().io_mutable().clear_entry();
-  std::cout << "Remaining: " <<   ((larcv::EventImage2D*) _supera.driver().io_mutable().get_data( larcv::kProductImage2D, "wire" ))->Image2DArray().size() << std::endl;
+  // std::cout << "clearing entry" << std::endl;
+  // _supera.driver().io_mutable().clear_entry();
+  // std::cout << "Remaining: " <<   ((larcv::EventImage2D*) _supera.driver().io_mutable().get_data( larcv::kProductImage2D, "wire" ))->Image2DArray().size() << std::endl;
+#endif // HAS_TORCH
 
   return 0;
 }
 
+
+/**
+ * 
+ * merge ssnet output into a wholeview image
+ *
+ * 
+ */
+void DLInterface::mergeSSNetOutput( const std::vector<larcv::Image2D>& wholeview_v, 
+				    const std::vector<larcv::ROI>& splitroi_v, 
+				    const std::vector<larcv::Image2D>& netout_v,
+				    std::vector<larcv::Image2D>& merged ) {
+  merged.clear();
+  for ( auto const& img : wholeview_v ) {
+    larcv::Image2D mergeout( img.meta() );
+    mergeout.paint(0);
+    merged.emplace_back( std::move(mergeout) );
+  }
+
+}
+
+/**
+ * 
+ * overridden method: setup class before job is run
+ *
+ * 
+ */
 void DLInterface::beginJob()
 {
   _supera.initialize();
@@ -409,15 +563,17 @@ void DLInterface::beginJob()
     openServerSocket();
     break;
   case kPyTorchCPU:
-    // try {
-    //   _module = torch::jit::load( _pytorch_net_script );
-    // }
-    // catch (...) {
-    //   throw cet::exception("DLInterface") << "Could not load model from " << _pytorch_net_script << std::endl;
-    // }
-    // if ( _module==nullptr )
-    //   throw cet::exception("DLInterface") << "model loaded as NULL " << _pytorch_net_script << std::endl;
-    //std::cout << "Network Loaded" << std::endl;
+#ifdef HAS_TORCH
+    try {
+      _module = torch::jit::load( _pytorch_net_script );
+    }
+    catch (...) {
+      throw cet::exception("DLInterface") << "Could not load model from " << _pytorch_net_script << std::endl;
+    }
+    if ( _module==nullptr )
+      throw cet::exception("DLInterface") << "model loaded as NULL " << _pytorch_net_script << std::endl;
+    std::cout << "Network Loaded" << std::endl;
+#endif
     break;
   case kTensorFlowCPU:
     break;
@@ -427,18 +583,54 @@ void DLInterface::beginJob()
 
 }
 
+/**
+ * 
+ * overridden method: setup class after all events are run
+ *
+ * 
+ */
 void DLInterface::endJob()
 {
   _supera.finalize();
 }
 
+/**
+ * 
+ * load pytorch network from torch script file
+ *
+ * 
+ */
+void DLInterface::loadNetwork_PyTorchCPU() {
+#ifdef HAS_TORCH
+  std::cout << "Loading network from " << _pytorch_net_script << " .... " << std::endl;
+  
+  std::shared_ptr<torch::jit::script::Module> module = nullptr;
+  try {
+    _module = torch::jit::load( _pytorch_net_script );
+  }
+  catch (...) {
+    throw cet::exception("DLInterface") << "Could not load model from " << _pytorch_net_script << std::endl;
+  }
+  if ( _module==nullptr )
+    throw cet::exception("DLInterface") << "model loaded as NULL " << _pytorch_net_script << std::endl;
+  std::cout << "Network Loaded" << std::endl;
+#endif
+}
+
+
+/**
+ * 
+ * open the server socket
+ *
+ * 
+ */
 void DLInterface::openServerSocket() {
   
   // open the zmq socket
   _context = new zmq::context_t(1);
   _socket  = new zmq::socket_t( *_context, ZMQ_REQ );
   char identity[10];
-  sprintf(identity,"larbys00");
+  sprintf(identity,"larbys00"); //to-do: replace with pid or some unique identifier
   _socket->setsockopt( ZMQ_IDENTITY, identity, 8 );
 
   if ( _interface==kDummyServer ) 
@@ -448,12 +640,24 @@ void DLInterface::openServerSocket() {
 
 }
 
+/**
+ * 
+ * close the server socket
+ *
+ * 
+ */
 void DLInterface::closeServerSocket() {
   // close zmq socket
   delete _socket;
   delete _context;
 }
 
+/**
+ * 
+ * for debug: send a dummy message to the dummy server
+ *
+ * 
+ */
 void DLInterface::sendDummyMessage() {
 
   //  Do 10 requests, waiting each time for a response

@@ -10,6 +10,8 @@ DLInterface: {
   NetInterface:     "DummyServer"
   SuperaConfigFile: "supera_ssnetinterface.fcl"
   PyTorchNetScript: "caffe_uresnet.pt"
+  SaveDetsplitImagesInput: true
+  SaveNetOutSplitImagesOutput: true
 }
 
 UBDLIntegration: @local::DLInterface

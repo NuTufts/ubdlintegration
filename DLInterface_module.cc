@@ -19,6 +19,9 @@
 
 #include <memory>
 
+// larsoft
+#include "lardataobj/RecoBase/OpFlash.h"
+
 // ubcv
 #include "ubcv/LArCVImageMaker/LArCVSuperaDriver.h"
 #include "ubcv/LArCVImageMaker/ImageMetaMaker.h"
@@ -35,7 +38,14 @@
 #include "larcv/core/DataFormat/ImageMeta.h"
 #include "larcv/core/DataFormat/ROI.h"
 #include "larcv/core/json/json_utils.h"
+
+// larlite
+#include "DataFormat/opflash.h"
+
+// ublarcvapp
 #include "ublarcvapp/UBImageMod/UBSplitDetector.h"
+#include "ublarcvapp/ubdllee/FixedCROIFromFlashAlgo.h"
+#include "ublarcvapp/ubdllee/FixedCROIFromFlashConfig.h"
 
 // ROOT
 #include "TMessage.h"
@@ -62,6 +72,7 @@ public:
   // classes without bare pointers or other resource use.
 
   typedef enum { kServer=0, kPyTorchCPU, kTensorFlowCPU, kDummyServer } NetInterface_t;
+  typedef enum { kWholeImageSplitter=0, kFlashCROI } Cropper_t;
 
   // Plugins should not be copied or assigned.
   DLInterface(DLInterface const &) = delete;
@@ -85,13 +96,21 @@ private:
   int runSupera( art::Event& e, std::vector<larcv::Image2D>& wholeview_imgs );
 
   // image processing/splitting/cropping
-  ublarcvapp::UBSplitDetector _imagesplitter;
+  Cropper_t   _cropping_method;
+  std::string _cropping_method_name;
+  ublarcvapp::UBSplitDetector _imagesplitter; //< full splitter
+  ublarcvapp::ubdllee::FixedCROIFromFlashAlgo _croifromflashalgo; //< croi from flash
   bool        _save_detsplit_input;
   bool        _save_detsplit_output;
+  std::string _opflash_producer_name;
   std::vector<larcv::Image2D> _splitimg_v;              //< container holding split images
   int runWholeViewSplitter( const std::vector<larcv::Image2D>& wholeview_v, 
 			    std::vector<larcv::Image2D>& splitimg_v,
 			    std::vector<larcv::ROI>&     splitroi_v );
+  int runCROIfromFlash( const std::vector<larcv::Image2D>& wholeview_v, 
+			art::Event& e,
+			std::vector<larcv::Image2D>& splitimg_v,
+			std::vector<larcv::ROI>&     splitroi_v );
   
   // the network interface to run
   NetInterface_t _interface;
@@ -153,9 +172,9 @@ DLInterface::DLInterface(fhicl::ParameterSet const & p)
   std::string inter   = p.get<std::string>("NetInterface");
   if ( inter=="Server" )
     _interface = kServer;
-  else if ( inter=="Pytorch" )
+  else if ( inter=="PyTorchCPU" )
     _interface = kPyTorchCPU;
-  else if ( inter=="TensorFlow" )
+  else if ( inter=="TensorFlowCPU" )
     _interface = kTensorFlowCPU;
   else if ( inter=="DummyServer" ) // for debugging
     _interface = kDummyServer;
@@ -165,13 +184,25 @@ DLInterface::DLInterface(fhicl::ParameterSet const & p)
 					<< std::endl;
   }
 
-  if ( _interface==kPyTorchCPU )
-    throw cet::exception("DLInterface") << "PytorchCPU interface not yet implemented" << std::endl;
   if ( _interface==kTensorFlowCPU )
     throw cet::exception("DLInterface") << "TensorFlowCPU interface not yet implemented" << std::endl;
 
+  // Image cropping/splitting config
+  _cropping_method_name = p.get<std::string>("CroppingMethod");
+  if ( _cropping_method_name=="WholeImageSplitter" )
+    _cropping_method = kWholeImageSplitter;
+  else if ( _cropping_method_name=="FlashCROI" )
+    _cropping_method = kFlashCROI;
+  else {
+    throw cet::exception("DLInterface") << "invalid cropping method. "
+					<< "options: {\"WholeImageSplitter\",\"FlashCROI\"}" 
+					<< std::endl;
+  }
   _save_detsplit_input  = p.get<bool>("SaveDetsplitImagesInput");
   _save_detsplit_output = p.get<bool>("SaveNetOutSplitImagesOutput");
+  if ( _cropping_method==kFlashCROI ) {
+    _opflash_producer_name = p.get<std::string>("OpFlashProducerName");
+  }
 
 
   std::string supera_cfg;
@@ -225,7 +256,18 @@ void DLInterface::produce(art::Event & e)
   // eventually have options here. But for now, wholeview splitter
   std::vector<larcv::Image2D> splitimg_v;
   std::vector<larcv::ROI>     splitroi_v;
-  int nsplit_imgs = runWholeViewSplitter( wholeview_v, splitimg_v, splitroi_v );
+
+  
+  int nsplit_imgs = 0;
+
+  switch (_cropping_method) {
+  case kWholeImageSplitter:
+    nsplit_imgs = runWholeViewSplitter( wholeview_v, splitimg_v, splitroi_v );
+    break;
+  case kFlashCROI:
+    nsplit_imgs = runCROIfromFlash( wholeview_v, e, splitimg_v, splitroi_v );
+    break;
+  }
   std::cout << "number of split images: " << nsplit_imgs << std::endl;
 
   // containers for outputs
@@ -277,7 +319,8 @@ void DLInterface::produce(art::Event & e)
   }
 
   // save merged out
-  
+  // to-do
+
   // save entry
   std::cout << "saving entry" << std::endl;
   io.save_entry();
@@ -285,7 +328,7 @@ void DLInterface::produce(art::Event & e)
   // we clear entries ourselves
   std::cout << "clearing entry" << std::endl;
   io.clear_entry();
-
+  
 }
 
 int DLInterface::runDummyServer( art::Event& e ) {
@@ -318,7 +361,7 @@ int DLInterface::runSupera( art::Event& e, std::vector<larcv::Image2D>& wholevie
   }else{ e.getByLabel(_wire_producer_name, data_h); }
   if(!data_h.isValid()) { 
     std::cerr<< "Attempted to load recob::Wire data: " << _wire_producer_name << std::endl;
-    throw ::larcv::larbys("Could not locate data!"); 
+    throw ::cet::exception("DLInterface") << "Could not locate recob::Wire data!" << std::endl;
   }
   _supera.SetDataPointer(*data_h,_wire_producer_name);
 
@@ -330,10 +373,6 @@ int DLInterface::runSupera( art::Event& e, std::vector<larcv::Image2D>& wholevie
   // get the images
   auto ev_imgs  = (larcv::EventImage2D*) _supera.driver().io_mutable().get_data( larcv::kProductImage2D, "wire" );
   ev_imgs->Move( wholeview_imgs );
-  // wholeview_imgs.clear();
-  // for ( auto const& img : ev_imgs->Image2DArray() ) {
-  //   wholeview_imgs.push_back( img );
-  // }
   
   return wholeview_imgs.size();
 }
@@ -381,6 +420,96 @@ int DLInterface::runWholeViewSplitter( const std::vector<larcv::Image2D>& wholev
 
   return splitimg_v.size();
 
+}
+
+/**
+ * produce subimage crops based on the location of the in-time flash
+ *
+ * passes the images into an instance of FixedCROIFromFlashAlgo (_croifromflashalgo member)
+ *
+ * @param[in] wholeview_v vector of whole-view images. one per plane.
+ * @param[in] e art::Event from which we will get the opflash objects
+ * @param[inout] splitimg_v vector of cropped images. many per plane.
+ * @param[inout] splitroi_v vector ROIs for split images. many  per plane.
+ *
+ **/
+int DLInterface::runCROIfromFlash( const std::vector<larcv::Image2D>& wholeview_v, 
+				   art::Event& e,
+				   std::vector<larcv::Image2D>& splitimg_v,
+				   std::vector<larcv::ROI>&     splitroi_v ) {
+
+  // first get the opflash objects from art
+  art::Handle<std::vector<recob::OpFlash> > data_h;
+  //  handle sub-name
+  if(_opflash_producer_name.find(" ")<_opflash_producer_name.size()) {
+    e.getByLabel(_opflash_producer_name.substr(0,_opflash_producer_name.find(" ")),
+		 _opflash_producer_name.substr(_opflash_producer_name.find(" ")+1,_opflash_producer_name.size()-_opflash_producer_name.find(" ")-1),
+		 data_h);
+  }else{ e.getByLabel(_opflash_producer_name, data_h); }
+
+  if(!data_h.isValid()) { 
+    std::cerr<< "Attempted to load recob::Opflash data: " << _opflash_producer_name << std::endl;
+    throw cet::exception("DLInterface") << "Could not locate recob::Opflash data!" << std::endl;
+  }
+  std::cout << "Loaded opflash data" << std::endl;
+
+  const float usec_min = 190*0.015625;
+  const float usec_max = 320*0.015625;
+
+  std::vector<larlite::opflash> intime_flashes_v;
+  for ( auto const& artflash : *data_h ) {
+
+    if ( artflash.Time()<usec_min || artflash.Time()>usec_max ) continue;
+
+    // hmm, there is no getter for the number of entries in the PE vector. 
+    // that seems wrong. we cheat about the number of PEs for now
+    // next we have to make larlite objects
+    std::vector<double> pe_v(32,0.0);
+    for ( size_t ich=0; ich<32; ich++ ) {
+      pe_v[ich] = artflash.PE(ich);
+    }
+    larlite::opflash llflash( artflash.Time(),    artflash.TimeWidth(),
+			      artflash.AbsTime(), artflash.Frame(),
+			      pe_v,
+			      1, 1, 1,
+			      artflash.YCenter(), artflash.YWidth(),
+			      artflash.ZCenter(), artflash.ZWidth(),
+			      artflash.WireCenters(),
+			      artflash.WireWidths() );
+    intime_flashes_v.emplace_back( std::move(llflash) );
+  }
+  std::cout << "converted into larlite opflash" << std::endl;
+
+  // pass them to the algo to get CROI    
+  for ( auto& llflash : intime_flashes_v ) {
+    std::vector<larcv::ROI> flashrois = _croifromflashalgo.findCROIfromFlash( llflash );
+    for ( auto& roi : flashrois )
+      splitroi_v.emplace_back( std::move(roi) );
+  }
+  std::cout << "create roi from flash" << std::endl;
+
+  // cropout the regions
+  size_t nplanes = wholeview_v.size();
+  size_t ncrops = 0;
+  for (size_t plane=0; plane<nplanes; plane++ ) {
+    const larcv::Image2D& wholeimg = wholeview_v[plane];
+    for ( auto& roi : splitroi_v ) {
+      const larcv::ImageMeta& bbox = roi.BB(plane);
+      std::cout << "crop from the whole image" << std::endl;
+      try {
+	larcv::Image2D crop = wholeimg.crop( bbox );
+	splitimg_v.emplace_back( std::move(crop) );
+      }
+      catch( std::exception& e ) {
+	throw cet::exception("DLInterface") << "error in cropping: " << e.what() << std::endl;
+      }
+      ncrops++;
+    }
+  }
+  std::cout << "cropped the regions: total " << ncrops << std::endl;
+
+  // done
+  return (int)ncrops;
 }
 
 /**
@@ -514,25 +643,27 @@ int DLInterface::runPyTorchCPU( const std::vector<larcv::Image2D>& wholeview_v,
   netout_v.clear();
   netout_v.reserve( nimgs+10 );
   for ( auto& img : splitimg_v ) {
-    
+    std::cout << "img[" << iimg << "] converting to aten::tensor" << std::endl;
     std::vector<torch::jit::IValue> input;
     input.push_back( larcv::torchutils::as_tensor( img ).reshape( {1,1,(int)img.meta().cols(),(int)img.meta().rows()} ) );
 
     at::Tensor output;
     try {
       output = _module->forward(input).toTensor();
-      //std::cout << "network produced: " << output.size(0) << "," << output.size(1) << "," << output.size(2) << std::endl;
+      std::cout << "img[" << iimg << "] network produced ssnet img " << output.size(0) << "," << output.size(1) << "," << output.size(2) << std::endl;
     }
     catch (std::exception& e) {
-      throw cet::exception("DLInterface") << "module error while running data: " << e.what() << std::endl;
+      throw cet::exception("DLInterface") << "module error while running img[" << iimg << "]: " << e.what() << std::endl;
     }
     // as img2d
     larcv::Image2D imgout( splitimg_v[iimg].meta() ); // hack until torchutils provides reverse
+    std::cout << "img[" << iimg << "] converting out back to image2d" << std::endl;
     netout_v.emplace_back( std::move(imgout) );
-
+    
     iimg++;
+    break;
   }
-
+  
   // std::cout << "saving entry" << std::endl;
   // _supera.driver().io_mutable().save_entry();
   
@@ -584,8 +715,11 @@ void DLInterface::beginJob()
     try {
       _module = torch::jit::load( _pytorch_net_script );
     }
-    catch (...) {
-      throw cet::exception("DLInterface") << "Could not load model from " << _pytorch_net_script << std::endl;
+    catch (std::exception& e) {
+      throw cet::exception("DLInterface") << "Could not load model from " << _pytorch_net_script 
+					  << ": "
+					  << e.what()
+					  << std::endl;
     }
     if ( _module==nullptr )
       throw cet::exception("DLInterface") << "model loaded as NULL " << _pytorch_net_script << std::endl;

@@ -5,12 +5,15 @@
 BEGIN_PROLOG
 
 DLInterface: {
-  module_type:      "DLInterface"
-  WireProducerName: "butcher"
-  NetInterface:     "DummyServer"
-  SuperaConfigFile: "supera_ssnetinterface.fcl"
-  PyTorchNetScript: "caffe_uresnet.pt"
-  SaveDetsplitImagesInput: true
+  module_type:         "DLInterface"
+  WireProducerName:    "butcher"
+  #NetInterface:       "DummyServer"
+  NetInterface:        "PyTorchCPU"
+  SuperaConfigFile:    "supera_ssnetinterface.fcl"
+  PyTorchNetScript:    "/uboone/app/users/tmw/caffe_uresnet.pt"
+  CroppingMethod:      "FlashCROI"
+  OpFlashProducerName: "simpleFlashBeam"
+  SaveDetsplitImagesInput:     true
   SaveNetOutSplitImagesOutput: true
 }
 

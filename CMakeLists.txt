@@ -8,7 +8,7 @@ set( UBOONECODE_LIB -L$ENV{UBOONECODE_LIB} )
 include_directories ( $ENV{LARLITE_COREDIR} ${LARCV_INCLUDE_DIR} $ENV{UBLARCVAPP_INCDIR} )
 set(CMAKE_CXX_STANDARD 17)
 if (Torch_FOUND)
-  include_directories ( $ENV{LIBTORCH_DIR}/include $ENV{LIBTORCH_DIR}/include/torch/csrc/api/include )
+  include_directories ( ${TORCH_INCLUDE_DIRS} )
   link_libraries( ${LIB_NAME} -L$ENV{BOOST_LIB} -lboost_system ${ROOTLIB} ${LARLITE_LIB} ${ublarcvapp_LIBRARIES} ${TORCH_LIBRARIES} ) 
   set(CMAKE_CXX_FLAGS  "${CMAKE_CXX_FLAGS} -DHAS_TORCH")
 else()
@@ -101,9 +101,9 @@ art_make( BASENAME_ONLY
 		)
 
 if (Torch_FOUND)
-   target_link_libraries( DLInterface_module cppzmq LArCVCoreBase LArCVCoreDataFormat LArCVCoreProcessor LArCVCoreJSON LArCVCoreTorchUtil LArCVApp_UBImageMod)
+   target_link_libraries( DLInterface_module cppzmq LArCVCoreBase LArCVCoreDataFormat LArCVCoreProcessor LArCVCoreJSON LArCVCoreTorchUtil LArCVApp_UBImageMod LArCVApp_ubdllee)
 else()
-   target_link_libraries( DLInterface_module cppzmq LArCVCoreBase LArCVCoreDataFormat LArCVCoreProcessor LArCVCoreJSON LArCVApp_UBImageMod )
+   target_link_libraries( DLInterface_module cppzmq LArCVCoreBase LArCVCoreDataFormat LArCVCoreProcessor LArCVCoreJSON LArCVApp_UBImageMod LArCVApp_ubdllee)
 endif()
 
 

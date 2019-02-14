@@ -100,7 +100,11 @@ art_make( BASENAME_ONLY
 		   ${ROOT_BASIC_LIB_LIST}
 		)
 
-target_link_libraries( DLInterface_module cppzmq LArCVCoreBase LArCVCoreDataFormat LArCVCoreProcessor LArCVCoreJSON LArCVApp_UBImageMod )
+if (Torch_FOUND)
+   target_link_libraries( DLInterface_module cppzmq LArCVCoreBase LArCVCoreDataFormat LArCVCoreProcessor LArCVCoreJSON LArCVCoreTorchUtil LArCVApp_UBImageMod)
+else()
+   target_link_libraries( DLInterface_module cppzmq LArCVCoreBase LArCVCoreDataFormat LArCVCoreProcessor LArCVCoreJSON LArCVApp_UBImageMod )
+endif()
 
 
 # install_headers()

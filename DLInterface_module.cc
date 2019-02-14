@@ -85,7 +85,7 @@ private:
   int runSupera( art::Event& e, std::vector<larcv::Image2D>& wholeview_imgs );
 
   // image processing/splitting/cropping
-  larcv::UBSplitDetector _imagesplitter;
+  ublarcvapp::UBSplitDetector _imagesplitter;
   bool        _save_detsplit_input;
   bool        _save_detsplit_output;
   std::vector<larcv::Image2D> _splitimg_v;              //< container holding split images
@@ -442,64 +442,7 @@ int DLInterface::runSSNetServer( const std::vector<larcv::Image2D>& wholeview_v,
 				 std::vector<larcv::ROI>& splitroi_v, 
 				 std::vector<larcv::Image2D>& netout_v ) {
   int status = 0;
-  return status;
-}
 
-
-/**
- * 
- * run networking using pytorch CPU C++ interface
- *
- * 
- */
-int DLInterface::runPyTorchCPU( const std::vector<larcv::Image2D>& wholeview_v, 
-				std::vector<larcv::Image2D>& splitimg_v, 
-				std::vector<larcv::ROI>& splitroi_v, 
-				std::vector<larcv::Image2D>& netout_v ) {
-
-#ifdef HAS_TORCH
-
-  int status = 0;
-  size_t nplanes = whileview_v.size();
-  size_t nimgs   = splitimg_v.size();
-  size_t nsets   = nimgs/nplanes;
-
-  std::vector<torch::jit::IValue> inputs;
-  inputs.reserve(nimgs+1);
-  for (int iimg=0; iimg<nimgs; iimg++ ) {
-    //larcv::ROI& roi = splitroi_v[iimg];
-    larcv::Image2D& img = splitimg_v[ iimg ];
-    inputs.push_back( larcv::torchutils::as_tensor( img ).reshape( {1,1,(int)img.meta().cols(),(int)img.meta().rows()} ) );
-  }
-  // debug
-  std::cout << "Converted the data: nimgs[plane2]=" << inputs.size() << std::endl;
-  std::cout << "  shape=" 
-  	    << inputs.front().size(0) << ","
-  	    << inputs.front().size(1) << ","
-  	    << inputs.front().size(2) << ","
-  	    << inputs.front().size(3)
-  	    << std::endl;
-
-
-  //run the net!
-  int iimg = 0;
-  netout_v.clear();
-  netout_v.reserve( nimgs+1 );
-  for ( auto& data : inputs ) {
-    at::Tensor output;
-    try {
-      output = _module->forward(data).toTensor();
-      //std::cout << "network produced: " << output.size(0) << "," << output.size(1) << "," << output.size(2) << std::endl;
-    }
-    catch (std::exception& e) {
-      throw cet::exception("DLInterface") << "module error while running data: " << e.what() << std::endl;
-    }
-    // as img2d
-    larcv::Image2D imgout( splitimg_v[iimg].meta() );
-    netout_v.emplace_back( std::move(imgout) );
-  }
-
-  
   // talk to the socket
   // for ( size_t imsg=0; imsg<msg_img_v.size(); imsg++ ) {
 
@@ -530,6 +473,65 @@ int DLInterface::runPyTorchCPU( const std::vector<larcv::Image2D>& wholeview_v,
   // zmq::message_t reply;
   // _socket->recv (&reply);
   // std::cout << "Received: " << reply.data() << std::endl;
+  
+  return status;
+}
+
+
+/**
+ * 
+ * run networking using pytorch CPU C++ interface
+ *
+ * 
+ */
+int DLInterface::runPyTorchCPU( const std::vector<larcv::Image2D>& wholeview_v, 
+				std::vector<larcv::Image2D>& splitimg_v, 
+				std::vector<larcv::ROI>& splitroi_v, 
+				std::vector<larcv::Image2D>& netout_v ) {
+
+#ifdef HAS_TORCH
+
+  size_t nimgs   = splitimg_v.size();
+
+  // std::vector<torch::jit::IValue> inputs;
+  // inputs.reserve(nimgs+1);
+  // for (size_t iimg=0; iimg<nimgs; iimg++ ) {
+  //   larcv::Image2D& img = splitimg_v[ iimg ];
+  //   inputs.push_back( larcv::torchutils::as_tensor( img ).reshape( {1,1,(int)img.meta().cols(),(int)img.meta().rows()} ) );
+  // }
+  // // debug
+  // std::cout << "Converted the data: nimgs[plane2]=" << inputs.size() << std::endl;
+  // std::cout << "  shape=" 
+  // 	    << inputs.front().size(0) << ","
+  // 	    << inputs.front().size(1) << ","
+  // 	    << inputs.front().size(2) << ","
+  // 	    << inputs.front().size(3)
+  // 	    << std::endl;
+
+
+  //run the net!
+  size_t iimg = 0;
+  netout_v.clear();
+  netout_v.reserve( nimgs+10 );
+  for ( auto& img : splitimg_v ) {
+    
+    std::vector<torch::jit::IValue> input;
+    input.push_back( larcv::torchutils::as_tensor( img ).reshape( {1,1,(int)img.meta().cols(),(int)img.meta().rows()} ) );
+
+    at::Tensor output;
+    try {
+      output = _module->forward(input).toTensor();
+      //std::cout << "network produced: " << output.size(0) << "," << output.size(1) << "," << output.size(2) << std::endl;
+    }
+    catch (std::exception& e) {
+      throw cet::exception("DLInterface") << "module error while running data: " << e.what() << std::endl;
+    }
+    // as img2d
+    larcv::Image2D imgout( splitimg_v[iimg].meta() ); // hack until torchutils provides reverse
+    netout_v.emplace_back( std::move(imgout) );
+
+    iimg++;
+  }
 
   // std::cout << "saving entry" << std::endl;
   // _supera.driver().io_mutable().save_entry();

@@ -124,7 +124,9 @@ private:
   int runPyTorchCPU( const std::vector<larcv::Image2D>& wholeview_v,
 		     std::vector<larcv::Image2D>& splitimg_v, 
 		     std::vector<larcv::ROI>& splitroi_v, 
-		     std::vector<larcv::Image2D>& netout_v );
+		     std::vector<larcv::Image2D>& showerout_v,
+		     std::vector<larcv::Image2D>& trackout_v);
+
   
 
   // interface: server (common)
@@ -143,7 +145,8 @@ private:
   int runSSNetServer( const std::vector<larcv::Image2D>& wholeview_v, 
 		      std::vector<larcv::Image2D>& splitimg_v, 
 		      std::vector<larcv::ROI>& splitroi_v, 
-		      std::vector<larcv::Image2D>& netout_v );
+		      std::vector<larcv::Image2D>& showerout_v,
+		      std::vector<larcv::Image2D>& trackout_v );
 
   // interface: dummy server (for debug)
   int runDummyServer( art::Event& e );
@@ -152,8 +155,10 @@ private:
   // merger/post-processing
   void mergeSSNetOutput( const std::vector<larcv::Image2D>& wholeview_v, 
 			 const std::vector<larcv::ROI>& splitroi_v, 
-			 const std::vector<larcv::Image2D>& netout_v,
-			 std::vector<larcv::Image2D>& merged );
+			 const std::vector<larcv::Image2D>& showerout_v,
+			 const std::vector<larcv::Image2D>& trackout_v,
+			 std::vector<larcv::Image2D>& showermerged_v,
+			 std::vector<larcv::Image2D>& trackmerged_v );
   
 
 };
@@ -271,7 +276,8 @@ void DLInterface::produce(art::Event & e)
   std::cout << "number of split images: " << nsplit_imgs << std::endl;
 
   // containers for outputs
-  std::vector<larcv::Image2D> netout_v;
+  std::vector<larcv::Image2D> showerout_v;
+  std::vector<larcv::Image2D> trackout_v;
 
   // run network (or not)
 
@@ -282,10 +288,10 @@ void DLInterface::produce(art::Event & e)
     status = runDummyServer(e);
     break;
   case kPyTorchCPU:
-    status = runPyTorchCPU( wholeview_v, splitimg_v, splitroi_v, netout_v );
+    status = runPyTorchCPU( wholeview_v, splitimg_v, splitroi_v, showerout_v, trackout_v );
     break;
   case kServer:
-    status = runSSNetServer( wholeview_v, splitimg_v, splitroi_v, netout_v );
+    status = runSSNetServer( wholeview_v, splitimg_v, splitroi_v, showerout_v, trackout_v );
     break;
   }
 
@@ -293,8 +299,9 @@ void DLInterface::produce(art::Event & e)
     throw cet::exception("DLInterface") << "Error running network" << std::endl;
 
   // merge the output
-  std::vector<larcv::Image2D> merged;
-  mergeSSNetOutput( wholeview_v, splitroi_v, netout_v, merged );
+  std::vector<larcv::Image2D> showermerged_v;
+  std::vector<larcv::Image2D> trackmerged_v;
+  mergeSSNetOutput( wholeview_v, splitroi_v, showerout_v, trackout_v, showermerged_v, trackmerged_v );
 
   // prepare the output
   larcv::IOManager& io = _supera.driver().io_mutable();
@@ -312,14 +319,20 @@ void DLInterface::produce(art::Event & e)
   }
 
   // save detsplit output
-  larcv::EventImage2D* ev_netout_split = nullptr;
+  larcv::EventImage2D* ev_netout_split[2] = {nullptr,nullptr};
   if ( _save_detsplit_output ) {
-    ev_netout_split = (larcv::EventImage2D*) io.get_data( larcv::kProductImage2D, "netoutsplit" );
-    ev_netout_split->Emplace( std::move(netout_v) );
+    ev_netout_split[0] = (larcv::EventImage2D*) io.get_data( larcv::kProductImage2D, "netoutsplit_shower" );
+    ev_netout_split[1] = (larcv::EventImage2D*) io.get_data( larcv::kProductImage2D, "netoutsplit_track" );
+    ev_netout_split[0]->Emplace( std::move(showerout_v) );
+    ev_netout_split[1]->Emplace( std::move(trackout_v) );
   }
 
   // save merged out
-  // to-do
+  larcv::EventImage2D* ev_merged[2] = {nullptr,nullptr};
+  ev_merged[0] = (larcv::EventImage2D*)io.get_data( larcv::kProductImage2D, "ssnetshower" );
+  ev_merged[1] = (larcv::EventImage2D*)io.get_data( larcv::kProductImage2D, "ssnettrack" );
+  ev_merged[0]->Emplace( std::move(showermerged_v) );
+  ev_merged[1]->Emplace( std::move(trackmerged_v) );
 
   // save entry
   std::cout << "saving entry" << std::endl;
@@ -569,7 +582,8 @@ size_t DLInterface::serializeImages( const size_t nplanes,
 int DLInterface::runSSNetServer( const std::vector<larcv::Image2D>& wholeview_v, 
 				 std::vector<larcv::Image2D>& splitimg_v, 
 				 std::vector<larcv::ROI>& splitroi_v, 
-				 std::vector<larcv::Image2D>& netout_v ) {
+				 std::vector<larcv::Image2D>& showerout_v,
+				 std::vector<larcv::Image2D>& trackout_v ) {
   int status = 0;
 
   // talk to the socket
@@ -616,32 +630,20 @@ int DLInterface::runSSNetServer( const std::vector<larcv::Image2D>& wholeview_v,
 int DLInterface::runPyTorchCPU( const std::vector<larcv::Image2D>& wholeview_v, 
 				std::vector<larcv::Image2D>& splitimg_v, 
 				std::vector<larcv::ROI>& splitroi_v, 
-				std::vector<larcv::Image2D>& netout_v ) {
+				std::vector<larcv::Image2D>& showerout_v,
+				std::vector<larcv::Image2D>& trackout_v) {
 
 #ifdef HAS_TORCH
 
   size_t nimgs   = splitimg_v.size();
 
-  // std::vector<torch::jit::IValue> inputs;
-  // inputs.reserve(nimgs+1);
-  // for (size_t iimg=0; iimg<nimgs; iimg++ ) {
-  //   larcv::Image2D& img = splitimg_v[ iimg ];
-  //   inputs.push_back( larcv::torchutils::as_tensor( img ).reshape( {1,1,(int)img.meta().cols(),(int)img.meta().rows()} ) );
-  // }
-  // // debug
-  // std::cout << "Converted the data: nimgs[plane2]=" << inputs.size() << std::endl;
-  // std::cout << "  shape=" 
-  // 	    << inputs.front().size(0) << ","
-  // 	    << inputs.front().size(1) << ","
-  // 	    << inputs.front().size(2) << ","
-  // 	    << inputs.front().size(3)
-  // 	    << std::endl;
-
 
   //run the net!
   size_t iimg = 0;
-  netout_v.clear();
-  netout_v.reserve( nimgs+10 );
+  showerout_v.clear();
+  showerout_v.reserve( nimgs+10 );
+  trackout_v.clear();
+  trackout_v.reserve( nimgs+10 );
   for ( auto& img : splitimg_v ) {
     std::cout << "img[" << iimg << "] converting to aten::tensor" << std::endl;
     std::vector<torch::jit::IValue> input;
@@ -650,28 +652,44 @@ int DLInterface::runPyTorchCPU( const std::vector<larcv::Image2D>& wholeview_v,
     at::Tensor output;
     try {
       output = _module->forward(input).toTensor();
-      std::cout << "img[" << iimg << "] network produced ssnet img " << output.size(0) << "," << output.size(1) << "," << output.size(2) << std::endl;
+      std::cout << "img[" << iimg << "] network produced ssnet img dim=";
+      for ( int i=0; i<output.dim(); i++ )
+	std::cout << output.size(i) << " ";
+      std::cout << std::endl;
     }
     catch (std::exception& e) {
       throw cet::exception("DLInterface") << "module error while running img[" << iimg << "]: " << e.what() << std::endl;
     }
+
+    // output is {1,3,H,W}
+    at::Tensor shower_slice = output.slice(1, 0, 1); // dim, start, end
+    at::Tensor track_slice  = output.slice(1, 1, 2);
+    std::cout << "img[" << iimg << "] slice dim=";
+    for ( int i=0; i<shower_slice.dim(); i++ )
+      std::cout << shower_slice.size(i) << " ";
+    std::cout << std::endl;
+
+
     // as img2d
-    larcv::Image2D imgout( splitimg_v[iimg].meta() ); // hack until torchutils provides reverse
     std::cout << "img[" << iimg << "] converting out back to image2d" << std::endl;
-    netout_v.emplace_back( std::move(imgout) );
+    try {
+      larcv::Image2D shrout = larcv::torchutils::image2d_fromtorch( shower_slice, 
+								    splitimg_v[iimg].meta() );
+      larcv::Image2D trkout = larcv::torchutils::image2d_fromtorch( track_slice,  
+								    splitimg_v[iimg].meta() );
+      std::cout << "img[" << iimg << "] conversion complete. store." << std::endl;
+      showerout_v.emplace_back( std::move(shrout) );
+      trackout_v.emplace_back(  std::move(trkout) );
+    }
+    catch (std::exception& e ) {
+      throw cet::exception("DLInterface") << "error in converting tensor->image2d: " << e.what() << std::endl;
+    }
     
     iimg++;
-    break;
   }
   
-  // std::cout << "saving entry" << std::endl;
-  // _supera.driver().io_mutable().save_entry();
-  
-  // std::cout << "clearing entry" << std::endl;
-  // _supera.driver().io_mutable().clear_entry();
-  // std::cout << "Remaining: " <<   ((larcv::EventImage2D*) _supera.driver().io_mutable().get_data( larcv::kProductImage2D, "wire" ))->Image2DArray().size() << std::endl;
 #endif // HAS_TORCH
-
+  
   return 0;
 }
 
@@ -683,16 +701,36 @@ int DLInterface::runPyTorchCPU( const std::vector<larcv::Image2D>& wholeview_v,
  * 
  */
 void DLInterface::mergeSSNetOutput( const std::vector<larcv::Image2D>& wholeview_v, 
-				    const std::vector<larcv::ROI>& splitroi_v, 
-				    const std::vector<larcv::Image2D>& netout_v,
-				    std::vector<larcv::Image2D>& merged ) {
-  merged.clear();
+				    const std::vector<larcv::ROI>& splitroi_v,
+				    const std::vector<larcv::Image2D>& showerout_v,
+				    const std::vector<larcv::Image2D>& trackout_v,
+				    std::vector<larcv::Image2D>& showermerged_v,
+				    std::vector<larcv::Image2D>& trackmerged_v) {
+				    
+  
+  // make output images
+  showermerged_v.clear();
+  trackmerged_v.clear();
   for ( auto const& img : wholeview_v ) {
-    larcv::Image2D mergeout( img.meta() );
-    mergeout.paint(0);
-    merged.emplace_back( std::move(mergeout) );
+    larcv::Image2D shrout( img.meta() );
+    shrout.paint(0);
+    showermerged_v.emplace_back( std::move(shrout) );
+
+    larcv::Image2D trkout( img.meta() );
+    trkout.paint(0);
+    trackmerged_v.emplace_back( std::move(trkout) );
   }
 
+  // loop through ssnetoutput, put values into image
+  for ( size_t iimg=0; iimg<showerout_v.size(); iimg++ ) {
+    auto const& shrout = showerout_v[iimg];
+    auto& shrmerge     = showermerged_v.at( shrout.meta().plane() );
+    shrmerge.overlay( shrout, larcv::Image2D::kOverWrite );
+
+    auto const& trkout = trackout_v[iimg];
+    auto& trkmerge     = showermerged_v.at( trkout.meta().plane() );
+    trkmerge.overlay( trkout, larcv::Image2D::kOverWrite );
+  }
 }
 
 /**

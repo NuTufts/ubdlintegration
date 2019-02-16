@@ -661,9 +661,9 @@ int DLInterface::runPyTorchCPU( const std::vector<larcv::Image2D>& wholeview_v,
       throw cet::exception("DLInterface") << "module error while running img[" << iimg << "]: " << e.what() << std::endl;
     }
 
-    // output is {1,3,H,W}
-    at::Tensor shower_slice = output.slice(1, 0, 1); // dim, start, end
-    at::Tensor track_slice  = output.slice(1, 1, 2);
+    // output is {1,3,H,W} with values being log(softmax)
+    at::Tensor shower_slice = output.slice(1, 0, 1).exp(); // dim, start, end
+    at::Tensor track_slice  = output.slice(1, 1, 2).exp();
     std::cout << "img[" << iimg << "] slice dim=";
     for ( int i=0; i<shower_slice.dim(); i++ )
       std::cout << shower_slice.size(i) << " ";

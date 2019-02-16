@@ -13,8 +13,8 @@ DLInterface: {
   PyTorchNetScript:    "/uboone/app/users/tmw/caffe_uresnet.pt"
   CroppingMethod:      "FlashCROI"
   OpFlashProducerName: "simpleFlashBeam"
-  SaveDetsplitImagesInput:     true
-  SaveNetOutSplitImagesOutput: true
+  SaveDetsplitImagesInput:     false
+  SaveNetOutSplitImagesOutput: false
 }
 
 UBDLIntegration: @local::DLInterface

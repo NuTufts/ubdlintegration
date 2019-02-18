@@ -28,6 +28,7 @@
 #include "ubcv/LArCVImageMaker/SuperaMetaMaker.h"
 #include "ubcv/LArCVImageMaker/SuperaWire.h"
 #include "ubcv/LArCVImageMaker/LAr2Image.h"
+#include "ubcv/ubdldata/pixeldata.h"
 
 // larcv
 #include "larcv/core/Base/larcv_base.h"
@@ -159,6 +160,13 @@ private:
 			 const std::vector<larcv::Image2D>& trackout_v,
 			 std::vector<larcv::Image2D>& showermerged_v,
 			 std::vector<larcv::Image2D>& trackmerged_v );
+
+  /// save to art::Event
+  void saveArtProducts( art::Event& ev,
+			const std::vector<larcv::Image2D>& wholeimg_v,
+			const std::vector<larcv::Image2D>& showermerged_v,
+			const std::vector<larcv::Image2D>& trackmerged_v );
+  std::vector<float> _pixelthresholds_forsavedscores;
   
 
 };
@@ -172,8 +180,17 @@ DLInterface::DLInterface(fhicl::ParameterSet const & p)
     // Initialize member data here.
 {
   // Call appropriate produces<>() functions here.
+  produces< std::vector<ubdldata::pixeldata> >();
+
+  // read in parameters and configure
+
+  // product to get recob::wire data from
   _wire_producer_name = p.get<std::string>("WireProducerName");
+
+  // name of supera configuration file
   _supera_config      = p.get<std::string>("SuperaConfigFile");
+
+  // interace to network
   std::string inter   = p.get<std::string>("NetInterface");
   if ( inter=="Server" )
     _interface = kServer;
@@ -189,6 +206,7 @@ DLInterface::DLInterface(fhicl::ParameterSet const & p)
 					<< std::endl;
   }
 
+  // throw exception for interfaces that are not implemented yet
   if ( _interface==kTensorFlowCPU )
     throw cet::exception("DLInterface") << "TensorFlowCPU interface not yet implemented" << std::endl;
 
@@ -237,6 +255,8 @@ DLInterface::DLInterface(fhicl::ParameterSet const & p)
   // get the path to the saved ssnet
   _pytorch_net_script = p.get<std::string>("PyTorchNetScript");
 
+  // configuration for art product output
+  _pixelthresholds_forsavedscores = p.get< std::vector<float> >("PixelThresholdsForSavedScoresPerPlane");
 
   // verbosity
   int verbosity = p.get<int>("Verbosity",2);
@@ -302,6 +322,9 @@ void DLInterface::produce(art::Event & e)
   std::vector<larcv::Image2D> showermerged_v;
   std::vector<larcv::Image2D> trackmerged_v;
   mergeSSNetOutput( wholeview_v, splitroi_v, showerout_v, trackout_v, showermerged_v, trackmerged_v );
+
+  // produce the art data product
+  saveArtProducts( e, wholeview_v, showermerged_v, trackmerged_v );
 
   // prepare the output
   larcv::IOManager& io = _supera.driver().io_mutable();
@@ -732,6 +755,62 @@ void DLInterface::mergeSSNetOutput( const std::vector<larcv::Image2D>& wholeview
     trkmerge.overlay( trkout, larcv::Image2D::kOverWrite );
   }
 }
+
+/**
+ * create ubdldata::pixeldata objects for art::Event
+ *
+ *
+ */
+void DLInterface::saveArtProducts( art::Event& ev, 
+				   const std::vector<larcv::Image2D>& wholeimg_v,
+				   const std::vector<larcv::Image2D>& showermerged_v,
+				   const std::vector<larcv::Image2D>& trackmerged_v ) {
+
+  std::unique_ptr< std::vector<ubdldata::pixeldata> > ppixdata_v(new std::vector<ubdldata::pixeldata>);
+
+  for ( auto const& adc : wholeimg_v ) {
+    int planeid           = (int)adc.meta().plane();
+    float pix_threshold   = _pixelthresholds_forsavedscores.at(planeid);
+    auto const& showerimg = showermerged_v.at(planeid);
+    auto const& trackimg  = trackmerged_v.at(planeid);
+
+    std::vector< std::vector<float> > pixdata_v;
+    // we reserve enough space to fill the whole image, but we shouldn't use all of the space
+    pixdata_v.reserve( adc.meta().rows()*adc.meta().cols() );
+
+    size_t npixels = 0;
+    for ( size_t r=0; r<adc.meta().rows(); r++ ) {
+      float tick = adc.meta().pos_y(r);
+      for ( size_t c=0; c<adc.meta().cols(); c++ ) {
+
+	// each pixel
+	
+	if ( adc.pixel(r,c)<pix_threshold ) continue;
+
+	float wire=adc.meta().pos_x(c);
+
+	std::vector<float> pixdata = { (float)wire, (float)tick, 
+				       (float)showerimg.pixel(r,c), (float)trackimg.pixel(r,c) };
+	
+	pixdata_v.push_back( pixdata );
+
+	npixels++;
+      }
+    }
+  
+    ubdldata::pixeldata out( pixdata_v,
+			     adc.meta().min_x(), adc.meta().min_y(), 
+			     adc.meta().max_x(), adc.meta().max_y(),
+			     (int)adc.meta().cols(), (int)adc.meta().rows(),
+			     (int)adc.meta().plane(), 4, 0 );
+
+    ppixdata_v->emplace_back( std::move(out) );
+  }
+
+  
+  ev.put( std::move(ppixdata_v) );
+}
+
 
 /**
  * 

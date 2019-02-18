@@ -7,6 +7,8 @@ BEGIN_PROLOG
 DLInterface: {
   module_type:         "DLInterface"
   WireProducerName:    "butcher"
+  OutputProducerName:  "ssnet"
+  PixelThresholdsForSavedScoresPerPlane: [5.0,5.0,5.0]
   #NetInterface:       "DummyServer"
   NetInterface:        "PyTorchCPU"
   SuperaConfigFile:    "supera_ssnetinterface.fcl"

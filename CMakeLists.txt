@@ -53,6 +53,7 @@ art_make( BASENAME_ONLY
 
           MODULE_LIBRARIES 	  	
 	  	   uboonecode_uboone_LArCVImageMaker
+		   ubcv_ubdldata
 	      	   TFileMetadataMicroBooNE_service
 	      	   FileCatalogMetadataMicroBooNE_service
 		   LArCVMetaMaker_service

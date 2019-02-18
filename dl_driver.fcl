@@ -87,8 +87,8 @@ physics:
 
  ssnetpath: [ssnet]
 
- stream: []
- end_paths: []
+ stream: [out1]
+ end_paths: [stream]
  trigger_paths: [ ssnetpath ]
 }
 
@@ -97,7 +97,7 @@ outputs:
  out1:
  {
    module_type: RootOutput
-   fileName:    "larsoft.root" #default file name, can override from command line with -o or --output
+   fileName:    "out_larsoft.root" #default file name, can override from command line with -o or --output
    dataTier:    "larlite"
    compressionLevel: 1
  }

@@ -12,7 +12,9 @@ DLInterface: {
   #NetInterface:       "DummyServer"
   NetInterface:        "PyTorchCPU"
   SuperaConfigFile:    "supera_ssnetinterface.fcl"
-  PyTorchNetScript:    "/uboone/app/users/tmw/caffe_uresnet.pt"
+  PyTorchNetScript:    ["/uboone/app/users/tmw/dl_model_files/ubssnet/mcc8_caffe_ubssnet_plane0.pytorchscript",
+                        "/uboone/app/users/tmw/dl_model_files/ubssnet/mcc8_caffe_ubssnet_plane1.pytorchscript",
+                        "/uboone/app/users/tmw/dl_model_files/ubssnet/mcc8_caffe_ubssnet_plane2.pytorchscript"]
   CroppingMethod:      "FlashCROI"
   OpFlashProducerName: "simpleFlashBeam"
   SaveDetsplitImagesInput:     false
@@ -86,7 +88,6 @@ physics:
  analyzers: {}
 
  ssnetpath: [ssnet]
-
  stream: [out1]
  end_paths: [stream]
  trigger_paths: [ ssnetpath ]

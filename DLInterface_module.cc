@@ -117,9 +117,9 @@ private:
   NetInterface_t _interface;
 
   // interface: pytorch cpu
-  std::string _pytorch_net_script;
+  std::vector<std::string> _pytorch_net_script; // one for each plane
 #ifdef HAS_TORCH
-  std::shared_ptr<torch::jit::script::Module> _module;  //< pointer to pytorch network
+  std::vector< std::shared_ptr<torch::jit::script::Module> > _module_ubssnet;  //< pointer to pytorch network
 #endif
   void loadNetwork_PyTorchCPU();
   int runPyTorchCPU( const std::vector<larcv::Image2D>& wholeview_v,
@@ -253,7 +253,7 @@ DLInterface::DLInterface(fhicl::ParameterSet const & p)
   _imagesplitter.configure( split_cfg );
 
   // get the path to the saved ssnet
-  _pytorch_net_script = p.get<std::string>("PyTorchNetScript");
+  _pytorch_net_script = p.get< std::vector<std::string> >("PyTorchNetScript");
 
   // configuration for art product output
   _pixelthresholds_forsavedscores = p.get< std::vector<float> >("PixelThresholdsForSavedScoresPerPlane");
@@ -671,11 +671,11 @@ int DLInterface::runPyTorchCPU( const std::vector<larcv::Image2D>& wholeview_v,
     std::cout << "img[" << iimg << "] converting to aten::tensor" << std::endl;
     std::vector<torch::jit::IValue> input;
     input.push_back( larcv::torchutils::as_tensor( img ).reshape( {1,1,(int)img.meta().cols(),(int)img.meta().rows()} ) );
-
+    size_t plane = img.meta().plane();
     at::Tensor output;
     try {
-      output = _module->forward(input).toTensor();
-      std::cout << "img[" << iimg << "] network produced ssnet img dim=";
+      output = _module_ubssnet.at(plane)->forward(input).toTensor();
+      std::cout << "img[" << iimg << ",plane=" << plane << "] network produced ssnet img dim=";
       for ( int i=0; i<output.dim(); i++ )
 	std::cout << output.size(i) << " ";
       std::cout << std::endl;
@@ -685,8 +685,8 @@ int DLInterface::runPyTorchCPU( const std::vector<larcv::Image2D>& wholeview_v,
     }
 
     // output is {1,3,H,W} with values being log(softmax)
-    at::Tensor shower_slice = output.slice(1, 0, 1).exp(); // dim, start, end
-    at::Tensor track_slice  = output.slice(1, 1, 2).exp();
+    at::Tensor shower_slice = output.slice(1, 1, 2).exp(); // dim, start, end
+    at::Tensor track_slice  = output.slice(1, 2, 3).exp();
     std::cout << "img[" << iimg << "] slice dim=";
     for ( int i=0; i<shower_slice.dim(); i++ )
       std::cout << shower_slice.size(i) << " ";
@@ -829,18 +829,7 @@ void DLInterface::beginJob()
     break;
   case kPyTorchCPU:
 #ifdef HAS_TORCH
-    try {
-      _module = torch::jit::load( _pytorch_net_script );
-    }
-    catch (std::exception& e) {
-      throw cet::exception("DLInterface") << "Could not load model from " << _pytorch_net_script 
-					  << ": "
-					  << e.what()
-					  << std::endl;
-    }
-    if ( _module==nullptr )
-      throw cet::exception("DLInterface") << "model loaded as NULL " << _pytorch_net_script << std::endl;
-    std::cout << "Network Loaded" << std::endl;
+    loadNetwork_PyTorchCPU();
 #endif
     break;
   case kTensorFlowCPU:
@@ -875,18 +864,18 @@ void DLInterface::endJob()
  */
 void DLInterface::loadNetwork_PyTorchCPU() {
 #ifdef HAS_TORCH
-  std::cout << "Loading network from " << _pytorch_net_script << " .... " << std::endl;
-  
-  std::shared_ptr<torch::jit::script::Module> module = nullptr;
-  try {
-    _module = torch::jit::load( _pytorch_net_script );
+  _module_ubssnet.clear();
+  for ( size_t iscript=0; iscript<_pytorch_net_script.size(); iscript++ ) {
+    std::cout << "Loading network[" << iscript << "] from " 
+	      << _pytorch_net_script[iscript] << " .... " << std::endl;
+    try {
+      _module_ubssnet.push_back( torch::jit::load( _pytorch_net_script[iscript] ) );
+    }
+    catch (...) {
+      throw cet::exception("DLInterface") << "Could not load model from " << _pytorch_net_script[iscript] << std::endl;
+    }
   }
-  catch (...) {
-    throw cet::exception("DLInterface") << "Could not load model from " << _pytorch_net_script << std::endl;
-  }
-  if ( _module==nullptr )
-    throw cet::exception("DLInterface") << "model loaded as NULL " << _pytorch_net_script << std::endl;
-  std::cout << "Network Loaded" << std::endl;
+  std::cout << "Networks Loaded" << std::endl;
 #endif
 }
 

@@ -24,13 +24,15 @@ ProcessDriver: {
         EventImageCols:   [3456,3456,3456]
         EventCompRows:    [6,6,6]
         EventCompCols:    [1,1,1]
+        TickBackward:     false
       }
     }
     SuperaWire: {
-      Verbosity: 1
-      OutImageLabel:    "wire"
+      Verbosity: 0
+      OutImageLabel:   "wire"
       LArWireProducer: "butcher"
-      TimeOffset:       2400      
+      TimeOffset:      2400      
+      TickBackward:    false
     }
   }
   UBSplitConfig: {

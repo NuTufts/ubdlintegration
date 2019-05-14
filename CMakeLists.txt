@@ -5,14 +5,17 @@ set( UBOONECODE_LIB -L$ENV{UBOONECODE_LIB} )
 #set( Torch_DIR $ENV{LIBTORCH_DIR}/share/cmake/Torch )
 #set( Caffe2_DIR $ENV{LIBTORCH_DIR}/share/cmake/Caffe2 )
 
-include_directories ( $ENV{LARLITE_COREDIR} ${LARCV_INCLUDE_DIR} $ENV{UBLARCVAPP_INCDIR} )
+include_directories ( $ENV{LARLITE_COREDIR} ${LARCV_INCLUDE_DIR} $ENV{UBLARCVAPP_INCDIR} ${PYTHON_INCLUDE_DIRS} )
+message("python ${PYTHON_INCLUDE_DIRS}")
+message("python ${PYTHON_LIBRARIES}")
+
 set(CMAKE_CXX_STANDARD 17)
 if (Torch_FOUND)
   include_directories ( ${TORCH_INCLUDE_DIRS} )
-  link_libraries( ${LIB_NAME} -L$ENV{BOOST_LIB} -lboost_system ${ROOTLIB} ${LARLITE_LIB} ${ublarcvapp_LIBRARIES} ${TORCH_LIBRARIES} ) 
+  link_libraries( ${LIB_NAME} -L$ENV{BOOST_LIB} -lboost_system ${ROOTLIB} ${LARLITE_LIB} ${ublarcvapp_LIBRARIES} ${TORCH_LIBRARIES} ${PYTHON_LIBRARIES} ) 
   set(CMAKE_CXX_FLAGS  "${CMAKE_CXX_FLAGS} -DHAS_TORCH")
 else()
-  link_libraries( ${LIB_NAME} -L$ENV{BOOST_LIB} -lboost_system ${ROOTLIB} ${LARLITE_LIB} ${ublarcvapp_LIBRARIES} ) 
+  link_libraries( ${LIB_NAME} -L$ENV{BOOST_LIB} -lboost_system ${ROOTLIB} ${LARLITE_LIB} ${ublarcvapp_LIBRARIES} $PYTHON_LIBRARIES) 
 endif()
 
 art_make( BASENAME_ONLY

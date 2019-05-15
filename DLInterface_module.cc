@@ -301,8 +301,8 @@ void DLInterface::produce(art::Event & e)
 
   // get the wholeview images for the network
   std::vector<larcv::Image2D> wholeview_v;
-  //int nwholeview_imgs = runSupera( e, wholeview_v );
-  //std::cout << "number of wholeview images: " << nwholeview_imgs << std::endl;
+  int nwholeview_imgs = runSupera( e, wholeview_v );
+  LARCV_INFO() << "number of wholeview images: " << nwholeview_imgs << std::endl;
 
   // we often have to pre-process the image, e.g. split it.
   // eventually have options here. But for now, wholeview splitter
@@ -745,7 +745,7 @@ int DLInterface::runSSNetServer( const int run, const int subrun, const int even
 	  std::cerr << "  first msg not empy!" << std::endl;
 	}
 	std::string reply_header = (char*)part_v.at(1).data();
-	std::cout << "  reply header: " << reply_header << std::endl;
+	//std::cout << "  reply header: " << reply_header << std::endl;
 	if ( ok && reply_header!="MDPC02" ) {
 	  ok = false;
 	  std::cerr << "  wrong header." << std::endl;
@@ -790,9 +790,9 @@ int DLInterface::runSSNetServer( const int run, const int subrun, const int even
 	if ( rrun==run && rsubrun==subrun && revent==event && reid>=0 && reid<(int)nimgs ) {
 	  //std::cout << "  expected reply " << img.meta().dump() << " reid=" << reid << std::endl;
 	  ok_v[ reid ]++;
-	  if ( ok_v[reid]==0 )
+	  if ( ok_v[reid]==2 )
 	    trk_v.emplace_back( std::move(img) );
-	  else
+	  else if ( ok_v[reid]==1 )
 	    shr_v.emplace_back( std::move(img) );
 	}
 	else {

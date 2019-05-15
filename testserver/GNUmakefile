@@ -1,14 +1,12 @@
-
-
 CXX=g++
 CXXFLAGS=-g -fPIC
 
 ZMQDIR=${MRB_INSTALL}/libzmq/install
 CPPZMQDIR=${MRB_INSTALL}/cppzmq/install
 
-INCLUDES=-I${ZMQDIR}/include -I${CPPZMQDIR}/include
+INCLUDES=-I${LIBZMQ_FQ_DIR}/include -I${CPPZMQ_DIR}/include
 
-LIBS=${ZMQDIR}/lib64/libzmq.a -lm -lpthread -lstdc++
+LIBS=-L${LIBZMQ_FQ_DIR}/lib64 -lzmq -lm -lpthread -lstdc++
 
 
 all: start_testserver run_testclient

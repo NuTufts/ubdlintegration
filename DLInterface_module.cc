@@ -131,8 +131,15 @@ private:
   
 
   // interface: server (common)
-  zmq::context_t* _context;
-  zmq::socket_t*  _socket; 
+  bool             _use_ssh_tunnel;
+  std::string      _ssh_address;
+  std::string      _ssh_username;
+  std::string      _broker_address;
+  std::string      _broker_port;
+  zmq::context_t*  _context;
+  zmq::socket_t*   _socket; 
+  zmq::pollitem_t* _poller;
+  
   void openServerSocket();
   void closeServerSocket();
   size_t serializeImages( const size_t nplanes,
@@ -143,7 +150,8 @@ private:
 
 
   // interface: ssnet gpu server
-  int runSSNetServer( const std::vector<larcv::Image2D>& wholeview_v, 
+  int runSSNetServer( const int run, const int subrun, const int event,
+		      const std::vector<larcv::Image2D>& wholeview_v, 
 		      std::vector<larcv::Image2D>& splitimg_v, 
 		      std::vector<larcv::ROI>& splitroi_v, 
 		      std::vector<larcv::Image2D>& showerout_v,
@@ -206,9 +214,28 @@ DLInterface::DLInterface(fhicl::ParameterSet const & p)
 					<< std::endl;
   }
 
+  // ==============================================================
+  //  INTERFACE SPECIFIC CONFIGS
+  //  --------------------------
+
+  // TENSORFLOW CPU
   // throw exception for interfaces that are not implemented yet
   if ( _interface==kTensorFlowCPU )
     throw cet::exception("DLInterface") << "TensorFlowCPU interface not yet implemented" << std::endl;
+
+  // PYTORCH CPU
+  
+
+  // SERVER (PYTORCH)
+  if ( _interface==kServer ) {
+    auto const server_pset = p.get<fhicl::ParameterSet>("ServerConfiguration");
+    _use_ssh_tunnel = server_pset.get<bool>("UseSSHtunnel");
+    _ssh_address    = server_pset.get<std::string>("SSHAddress");
+    _ssh_username   = server_pset.get<std::string>("SSHUsername");
+    _broker_address = server_pset.get<std::string>("BrokerAddress");
+    _broker_port    = server_pset.get<std::string>("BrokerPort");
+  }
+
 
   // Image cropping/splitting config
   _cropping_method_name = p.get<std::string>("CroppingMethod");
@@ -274,8 +301,8 @@ void DLInterface::produce(art::Event & e)
 
   // get the wholeview images for the network
   std::vector<larcv::Image2D> wholeview_v;
-  int nwholeview_imgs = runSupera( e, wholeview_v );
-  std::cout << "number of wholeview images: " << nwholeview_imgs << std::endl;
+  //int nwholeview_imgs = runSupera( e, wholeview_v );
+  //std::cout << "number of wholeview images: " << nwholeview_imgs << std::endl;
 
   // we often have to pre-process the image, e.g. split it.
   // eventually have options here. But for now, wholeview splitter
@@ -293,7 +320,8 @@ void DLInterface::produce(art::Event & e)
     nsplit_imgs = runCROIfromFlash( wholeview_v, e, splitimg_v, splitroi_v );
     break;
   }
-  std::cout << "number of split images: " << nsplit_imgs << std::endl;
+
+  LARCV_INFO() << "number of split images: " << nsplit_imgs << std::endl;
 
   // containers for outputs
   std::vector<larcv::Image2D> showerout_v;
@@ -302,21 +330,23 @@ void DLInterface::produce(art::Event & e)
   // run network (or not)
 
   int status = 0;
-  switch (_interface) {
-  case kDummyServer:
-  case kTensorFlowCPU:
-    status = runDummyServer(e);
-    break;
-  case kPyTorchCPU:
-    status = runPyTorchCPU( wholeview_v, splitimg_v, splitroi_v, showerout_v, trackout_v );
-    break;
-  case kServer:
-    status = runSSNetServer( wholeview_v, splitimg_v, splitroi_v, showerout_v, trackout_v );
-    break;
+  if ( splitimg_v.size()>0 ) {
+    switch (_interface) {
+    case kDummyServer:
+    case kTensorFlowCPU:
+      status = runDummyServer(e);
+      break;
+    case kPyTorchCPU:
+      status = runPyTorchCPU( wholeview_v, splitimg_v, splitroi_v, showerout_v, trackout_v );
+      break;
+    case kServer:
+      status = runSSNetServer( e.id().run(), e.id().subRun(), e.id().event(),
+			       wholeview_v, splitimg_v, splitroi_v, showerout_v, trackout_v );
+      break;
+    }
+    if ( status!=0 )
+      throw cet::exception("DLInterface") << "Error running network" << std::endl;
   }
-
-  if ( status!=0 )
-    throw cet::exception("DLInterface") << "Error running network" << std::endl;
 
   // merge the output
   std::vector<larcv::Image2D> showermerged_v;
@@ -331,7 +361,7 @@ void DLInterface::produce(art::Event & e)
   
   // save the wholeview images back to the supera IO
   larcv::EventImage2D* ev_imgs  = (larcv::EventImage2D*) io.get_data( larcv::kProductImage2D, "wire" );
-  std::cout << "wire eventimage2d=" << ev_imgs << std::endl;
+  //std::cout << "wire eventimage2d=" << ev_imgs << std::endl;
   ev_imgs->Emplace( std::move(wholeview_v) );
 
   // save detsplit input
@@ -358,11 +388,11 @@ void DLInterface::produce(art::Event & e)
   ev_merged[1]->Emplace( std::move(trackmerged_v) );
 
   // save entry
-  std::cout << "saving entry" << std::endl;
+  //std::cout << "saving entry" << std::endl;
   io.save_entry();
   
   // we clear entries ourselves
-  std::cout << "clearing entry" << std::endl;
+  //std::cout << "clearing entry" << std::endl;
   io.clear_entry();
   
 }
@@ -403,7 +433,7 @@ int DLInterface::runSupera( art::Event& e, std::vector<larcv::Image2D>& wholevie
 
   // execute supera
   bool autosave_entry = false;
-  std::cout << "process event: (" << e.id().run() << "," << e.id().subRun() << "," << e.id().event() << ")" << std::endl;
+  //std::cout << "process event: (" << e.id().run() << "," << e.id().subRun() << "," << e.id().event() << ")" << std::endl;
   _supera.process(e.id().run(),e.id().subRun(),e.id().event(), autosave_entry);
 
   // get the images
@@ -437,10 +467,10 @@ int DLInterface::runWholeViewSplitter( const std::vector<larcv::Image2D>& wholev
   
   //
   // debug: dump the meta definitions for the wholeview images
-  std::cout << "DLInterface: superawire images made " << wholeview_v.size() << std::endl;
-  for (auto& img : wholeview_v ) {
-    std::cout << img.meta().dump() << std::endl;
-  }  
+  //std::cout << "DLInterface: superawire images made " << wholeview_v.size() << std::endl;
+  // for (auto& img : wholeview_v ) {
+  //   std::cout << img.meta().dump() << std::endl;
+  // }  
   
   //
   // split image into subregions
@@ -487,7 +517,7 @@ int DLInterface::runCROIfromFlash( const std::vector<larcv::Image2D>& wholeview_
     std::cerr<< "Attempted to load recob::Opflash data: " << _opflash_producer_name << std::endl;
     throw cet::exception("DLInterface") << "Could not locate recob::Opflash data!" << std::endl;
   }
-  std::cout << "Loaded opflash data" << std::endl;
+  //std::cout << "Loaded opflash data" << std::endl;
 
   const float usec_min = 190*0.015625;
   const float usec_max = 320*0.015625;
@@ -514,7 +544,7 @@ int DLInterface::runCROIfromFlash( const std::vector<larcv::Image2D>& wholeview_
 			      artflash.WireWidths() );
     intime_flashes_v.emplace_back( std::move(llflash) );
   }
-  std::cout << "converted into larlite opflash" << std::endl;
+  //std::cout << "converted into larlite opflash" << std::endl;
 
   // pass them to the algo to get CROI    
   for ( auto& llflash : intime_flashes_v ) {
@@ -522,7 +552,7 @@ int DLInterface::runCROIfromFlash( const std::vector<larcv::Image2D>& wholeview_
     for ( auto& roi : flashrois )
       splitroi_v.emplace_back( std::move(roi) );
   }
-  std::cout << "create roi from flash" << std::endl;
+  //std::cout << "create roi from flash" << std::endl;
 
   // cropout the regions
   size_t nplanes = wholeview_v.size();
@@ -531,7 +561,7 @@ int DLInterface::runCROIfromFlash( const std::vector<larcv::Image2D>& wholeview_
     const larcv::Image2D& wholeimg = wholeview_v[plane];
     for ( auto& roi : splitroi_v ) {
       const larcv::ImageMeta& bbox = roi.BB(plane);
-      std::cout << "crop from the whole image" << std::endl;
+      //std::cout << "crop from the whole image" << std::endl;
       try {
 	larcv::Image2D crop = wholeimg.crop( bbox );
 	splitimg_v.emplace_back( std::move(crop) );
@@ -542,7 +572,7 @@ int DLInterface::runCROIfromFlash( const std::vector<larcv::Image2D>& wholeview_
       ncrops++;
     }
   }
-  std::cout << "cropped the regions: total " << ncrops << std::endl;
+  //std::cout << "cropped the regions: total " << ncrops << std::endl;
 
   // done
   return (int)ncrops;
@@ -592,7 +622,7 @@ size_t DLInterface::serializeImages( const size_t nplanes,
     }
   }
   
-  std::cout << "Created " << msg_img_v.size() << " messages. Total image message size: " << img_msg_totsize << " (chars)" << std::endl;
+  //std::cout << "Created " << msg_img_v.size() << " messages. Total image message size: " << img_msg_totsize << " (chars)" << std::endl;
   return img_msg_totsize;
 }
 
@@ -602,44 +632,206 @@ size_t DLInterface::serializeImages( const size_t nplanes,
  *
  * 
  */
-int DLInterface::runSSNetServer( const std::vector<larcv::Image2D>& wholeview_v, 
+int DLInterface::runSSNetServer( const int run, const int subrun, const int event, 
+				 const std::vector<larcv::Image2D>& wholeview_v, 
 				 std::vector<larcv::Image2D>& splitimg_v, 
 				 std::vector<larcv::ROI>& splitroi_v, 
 				 std::vector<larcv::Image2D>& showerout_v,
 				 std::vector<larcv::Image2D>& trackout_v ) {
   int status = 0;
 
-  // talk to the socket
-  // for ( size_t imsg=0; imsg<msg_img_v.size(); imsg++ ) {
+  // codes
+  const std::uint8_t empty = 0;
+  const char request       = '\002';
+  zmq::message_t header_msg (6);
+  memcpy (header_msg.data (), "MDPC02", 6);
 
-  //   // first the name
-  //   std::cout << "sending name[" << imsg << "] ... ";
-  //   _socket->send( msg_name_v[imsg].c_str(), msg_name_v[imsg].length(), ZMQ_SNDMORE );
-  //   std::cout << " done" << std::endl;
+  // mcc9 vs mcc8 scale factors
+  float mcc9vs8_scale[3] = { 43.0/53.0, 43.0/52.0, 48.0/59.0 };
 
-  //   // meta
-  //   std::cout << "sending meta[" << imsg << "] ... ";
-  //   _socket->send( msg_meta_v[imsg].c_str(), msg_meta_v[imsg].length(), ZMQ_SNDMORE );
-  //   std::cout << " done" << std::endl;
+  // create the data
+  //std::cout << "RunSSNetServer: serialize" << std::endl;
+  std::vector< zmq::message_t > zmsg_v[3];
 
-  //   // image
-  //   std::cout << "sending image[" << imsg << "] ... size=" << msg_img_v[imsg].size() << " ... ";
-  //   if (imsg+1!=msg_img_v.size()) {
-  //     _socket->send( msg_img_v[imsg].data(), msg_img_v[imsg].size(), ZMQ_SNDMORE );
-  //     std::cout << " done" << std::endl;
-  //   }
-  //   else {
-  //     _socket->send( msg_img_v[imsg].data(), msg_img_v[imsg].size() );
-  //     std::cout << "last message sent" << std::endl;
-  //   }
+  for ( size_t iimg=0; iimg<splitimg_v.size(); iimg++ ) {
+
+    larcv::Image2D& img = splitimg_v.at(iimg);
+
+    int plane = img.meta().plane();
+    int iid   = zmsg_v[plane].size();
+
+    img.scale_inplace( mcc9vs8_scale[plane] );
+
+    // make a binary json string
+    std::vector<std::uint8_t> bson 
+      = larcv::json::as_bson( img, run, subrun, event, iid );
+    zmq::message_t an_image( bson.size() );
+    memcpy( an_image.data(), bson.data(), bson.size() );
+    zmsg_v[ plane ].emplace_back( std::move(an_image) );
+
+  }
+
+
+  for ( size_t plane=0; plane<3; plane++ ) {
+    // send the message according to majortomo protocol
+    //std::cout << "RunSSNetServer: send Plane[" << plane << "] images. "
+    //	      << "nimages=" << zmsg_v[plane].size() 
+    //        << std::endl;
+
+    // service name
+    char service_name[20];
+    sprintf(service_name,"ubssnet_plane%d",(int)plane);
+
+    // send the message parts    
+    //std::cout << "  debug: send empty" << std::endl;
+    _socket->send( (char*)empty,       0, ZMQ_SNDMORE );
+    //std::cout << "  debug: send header" << std::endl;
+    _socket->send( header_msg.data(),  6, ZMQ_SNDMORE );
+    //std::cout << "  debug: send request command" << std::endl;
+    _socket->send( (char*)&request, 1, ZMQ_SNDMORE );
+    //std::cout << "  debug: send service name" << std::endl;
+    _socket->send( service_name,   14, ZMQ_SNDMORE );
+
+    size_t nimgs = zmsg_v[plane].size();
+    for ( size_t imsg=0; imsg<nimgs; imsg++ ) {
+      //std::vector<std::uint8_t>& msg = msg_v[plane].at(imsg);
+      zmq::message_t& zmsg = zmsg_v[plane].at(imsg);
+
+      //std::cout << "  debug: send img[" << imsg << "]" << std::endl;
+      if (imsg+1<nimgs)
+    	_socket->send( zmsg.data(), zmsg.size(), ZMQ_SNDMORE );
+      else {
+    	_socket->send( zmsg.data(), zmsg.size(), 0 );
+	//std::cout << "  final image." << std::endl;
+      }
+    }
+
+
+    // poll for a response
+    int more;
+    bool isfinal = false;
+    std::vector< zmq::message_t > zreply_v;
+
+    while ( !isfinal ) {
+
+      zmq::poll( _poller, 1, -1 );
+      if ( _poller->revents & ZMQ_POLLIN ) {
+
+	// receive multi-part: keep receiving until done
+	// expect reply with at least 4 parts: [empty] [WORKER HEADER] [PARTIAL/FINAL] [DATA ...]
+	std::vector< zmq::message_t > part_v;
+
+	while ( 1 ) {
+
+	  zmq::message_t reply;
+	  _socket->recv( &reply );
+	  size_t more_size = sizeof(more);
+	  _socket->getsockopt(ZMQ_RCVMORE,&more,&more_size);
+
+	  
+	  part_v.emplace_back( std::move(reply) );
+	  
+	  if ( !more )
+	    break;
+	}
+	// std::cout << "  Plane[" << plane << "]"
+	// 	  << "  Received in batch: " << part_v.size() 
+	// 	  << std::endl;
+
+	// parse
+	bool ok = true;
+	if ( part_v.at(0).size()!=0 ) {
+	  ok = false;
+	  std::cerr << "  first msg not empy!" << std::endl;
+	}
+	std::string reply_header = (char*)part_v.at(1).data();
+	std::cout << "  reply header: " << reply_header << std::endl;
+	if ( ok && reply_header!="MDPC02" ) {
+	  ok = false;
+	  std::cerr << "  wrong header." << std::endl;
+	}
+	if ( ok ) {
+	  //std::cout << "  [partial/final] = " << (char*)part_v.at(2).data() << std::endl;
+	  if ( *((char*)part_v.at(2).data())=='\004' ) {
+	    isfinal = true;
+	    //std::cout << "  final marker received" << std::endl;
+	  }
+	  for ( size_t i=3; i<part_v.size(); i++ ) {
+	    zreply_v.emplace_back( std::move(part_v[i]) );
+	  }
+	}
+	if ( !ok ) {
+	  std::cerr << "Error in parser" << std::endl;
+	  break;
+	}
+	
+      }//end of if poll-in found
+    }//end of is final loop
+    //std::cout << " Number of replies: " << zreply_v.size() << std::endl;
+
+    // we check if we got all of them back
+    // we expect two images back per sent (track+shower scores)
+    bool isgood = true;
+    std::vector<int> ok_v( nimgs, 0 );
+    std::vector< larcv::Image2D > shr_v;
+    std::vector< larcv::Image2D > trk_v;
+
+    if ( zreply_v.size()==2*nimgs ) {
+
+      for ( auto& data : zreply_v ) {
+	// convert into vector of uint8_t
+	std::vector< std::uint8_t > bson( data.size(), 0 );
+	memcpy( bson.data(), data.data(), data.size() );
+	// convert into image
+	nlohmann::json j = larcv::json::json_from_bson( bson );
+	int rrun,rsubrun,revent,reid; // returned IDs
+	larcv::json::rseid_from_json( j, rrun, rsubrun, revent, reid );
+	larcv::Image2D img = larcv::json::image2d_from_json( j );
+	if ( rrun==run && rsubrun==subrun && revent==event && reid>=0 && reid<(int)nimgs ) {
+	  //std::cout << "  expected reply " << img.meta().dump() << " reid=" << reid << std::endl;
+	  ok_v[ reid ]++;
+	  if ( ok_v[reid]==0 )
+	    trk_v.emplace_back( std::move(img) );
+	  else
+	    shr_v.emplace_back( std::move(img) );
+	}
+	else {
+	  std::cerr << "  Unexpected (run,subrun,event,id)" << std::endl;
+	  isgood = false;
+	  break;
+	}
+      }//end of zreply_v loop
+
+    }
+    else {
+      isgood = false;
+      std::cerr << "   unexpected number of replies" << std::endl;
+    }
+
+    // final check
+    if ( isgood ) {
+      for ( size_t ii=0; ii<nimgs; ii++ ) {
+	if ( ok_v[ii]!=2 ) {
+	  isgood = false;
+	  std::cerr << "  Missing reply" << std::endl;
+	  break;
+	}
+      }
+    }
+
+    if ( isgood ) {
+      //std::cout << "  Replies look good!" << std::endl;
+      for ( auto& shr : shr_v ) {
+	showerout_v.emplace_back( std::move(shr) );
+      }
+      for ( auto& trk : trk_v ) {
+	trackout_v.emplace_back( std::move(trk) );
+      }
+    }
+
+  }//end of loop over planes
     
-  // }
-  // std::cout << "Event messages Sent!" << std::endl;
-  
-  // zmq::message_t reply;
-  // _socket->recv (&reply);
-  // std::cout << "Received: " << reply.data() << std::endl;
-  
+     
   return status;
 }
 
@@ -668,17 +860,17 @@ int DLInterface::runPyTorchCPU( const std::vector<larcv::Image2D>& wholeview_v,
   trackout_v.clear();
   trackout_v.reserve( nimgs+10 );
   for ( auto& img : splitimg_v ) {
-    std::cout << "img[" << iimg << "] converting to aten::tensor" << std::endl;
+    //std::cout << "img[" << iimg << "] converting to aten::tensor" << std::endl;
     std::vector<torch::jit::IValue> input;
     input.push_back( larcv::torchutils::as_tensor( img ).reshape( {1,1,(int)img.meta().cols(),(int)img.meta().rows()} ) );
     size_t plane = img.meta().plane();
     at::Tensor output;
     try {
       output = _module_ubssnet.at(plane)->forward(input).toTensor();
-      std::cout << "img[" << iimg << ",plane=" << plane << "] network produced ssnet img dim=";
-      for ( int i=0; i<output.dim(); i++ )
-	std::cout << output.size(i) << " ";
-      std::cout << std::endl;
+      //std::cout << "img[" << iimg << ",plane=" << plane << "] network produced ssnet img dim=";
+      // for ( int i=0; i<output.dim(); i++ )
+      // 	std::cout << output.size(i) << " ";
+      // std::cout << std::endl;
     }
     catch (std::exception& e) {
       throw cet::exception("DLInterface") << "module error while running img[" << iimg << "]: " << e.what() << std::endl;
@@ -687,20 +879,20 @@ int DLInterface::runPyTorchCPU( const std::vector<larcv::Image2D>& wholeview_v,
     // output is {1,3,H,W} with values being log(softmax)
     at::Tensor shower_slice = output.slice(1, 1, 2).exp(); // dim, start, end
     at::Tensor track_slice  = output.slice(1, 2, 3).exp();
-    std::cout << "img[" << iimg << "] slice dim=";
-    for ( int i=0; i<shower_slice.dim(); i++ )
-      std::cout << shower_slice.size(i) << " ";
-    std::cout << std::endl;
+    //std::cout << "img[" << iimg << "] slice dim=";
+    // for ( int i=0; i<shower_slice.dim(); i++ )
+    //   std::cout << shower_slice.size(i) << " ";
+    // std::cout << std::endl;
 
 
     // as img2d
-    std::cout << "img[" << iimg << "] converting out back to image2d" << std::endl;
+    //std::cout << "img[" << iimg << "] converting out back to image2d" << std::endl;
     try {
       larcv::Image2D shrout = larcv::torchutils::image2d_fromtorch( shower_slice, 
 								    splitimg_v[iimg].meta() );
       larcv::Image2D trkout = larcv::torchutils::image2d_fromtorch( track_slice,  
 								    splitimg_v[iimg].meta() );
-      std::cout << "img[" << iimg << "] conversion complete. store." << std::endl;
+      //std::cout << "img[" << iimg << "] conversion complete. store." << std::endl;
       showerout_v.emplace_back( std::move(shrout) );
       trackout_v.emplace_back(  std::move(trkout) );
     }
@@ -749,9 +941,11 @@ void DLInterface::mergeSSNetOutput( const std::vector<larcv::Image2D>& wholeview
     auto const& shrout = showerout_v[iimg];
     auto& shrmerge     = showermerged_v.at( shrout.meta().plane() );
     shrmerge.overlay( shrout, larcv::Image2D::kOverWrite );
+  }
 
+  for ( size_t iimg=0; iimg<trackout_v.size(); iimg++ ) {
     auto const& trkout = trackout_v[iimg];
-    auto& trkmerge     = showermerged_v.at( trkout.meta().plane() );
+    auto& trkmerge     = trackmerged_v.at( trkout.meta().plane() );
     trkmerge.overlay( trkout, larcv::Image2D::kOverWrite );
   }
 }
@@ -892,16 +1086,21 @@ void DLInterface::openServerSocket() {
   
   // open the zmq socket
   _context = new zmq::context_t(1);
-  _socket  = new zmq::socket_t( *_context, ZMQ_REQ );
-  char identity[10];
-  sprintf(identity,"larbys00"); //to-do: replace with pid or some unique identifier
-  _socket->setsockopt( ZMQ_IDENTITY, identity, 8 );
+  //_socket  = new zmq::socket_t( *_context, ZMQ_REQ );
+  _socket  = new zmq::socket_t( *_context, ZMQ_DEALER );
+  // char identity[10];
+  // sprintf(identity,"larbys00"); //to-do: replace with pid or some unique identifier
+  // _socket->setsockopt( ZMQ_IDENTITY, identity, 8 );
 
   if ( _interface==kDummyServer ) 
     _socket->connect("tcp://localhost:5555");
-  else
-    throw cet::exception("DLInterface") << "connection for gpu-server not defined yet" << std::endl;
-
+  else if ( _interface==kServer ) {
+    std::string broker = _broker_address+":"+_broker_port;
+    std::cout << "Connecting to Broker @ " << broker << std::endl;
+    _socket->connect( broker );
+  }
+  
+  _poller = new zmq::pollitem_t{ *_socket, 0, ZMQ_POLLIN, 0 };
 }
 
 /**
@@ -919,9 +1118,12 @@ void DLInterface::closeServerSocket() {
     delete _socket;
   if ( _context )
     delete _context;
+  if ( _poller ) 
+    delete _poller;
 
   _socket  = nullptr;
   _context = nullptr;
+  _poller  = nullptr;
 }
 
 /**

@@ -10,7 +10,8 @@ DLInterface: {
   OutputProducerName:  "ssnet"
   PixelThresholdsForSavedScoresPerPlane: [5.0,5.0,5.0]
   #NetInterface:       "DummyServer"
-  NetInterface:        "PyTorchCPU"
+  #NetInterface:        "PyTorchCPU"
+  NetInterface:        "Server"
   SuperaConfigFile:    "supera_ssnetinterface.fcl"
   PyTorchNetScript:    ["/uboone/app/users/tmw/dl_model_files/ubssnet/mcc8_caffe_ubssnet_plane0.pytorchscript",
                         "/uboone/app/users/tmw/dl_model_files/ubssnet/mcc8_caffe_ubssnet_plane1.pytorchscript",
@@ -19,6 +20,13 @@ DLInterface: {
   OpFlashProducerName: "simpleFlashBeam"
   SaveDetsplitImagesInput:     false
   SaveNetOutSplitImagesOutput: false
+  ServerConfiguration: {
+      UseSSHtunnel: false
+      SSHAddress: ""
+      SSHUsername: "twongj01"
+      BrokerAddress: "tcp://nudot.lns.mit.edu"
+      BrokerPort: "6000"
+  }
 }
 
 UBDLIntegration: @local::DLInterface
@@ -42,12 +50,12 @@ services:
 #services.TimeTracker.dbOutput: {}
 #services.MemoryTracker.printSummaries: []
 #services.MemoryTracker.includeMallocInfo: false
-services.DetectorPropertiesService.NumberTimeSamples:        6400
-services.DetectorPropertiesService.ReadOutWindowSize:        6400
-services.DetectorClocksService.InheritClockConfig:           false
-services.DetectorClocksService.TriggerOffsetTPC:             -0.400e3
+services.DetectorPropertiesService.NumberTimeSamples: 6400
+services.DetectorPropertiesService.ReadOutWindowSize: 6400
+services.DetectorClocksService.InheritClockConfig:    false
+services.DetectorClocksService.TriggerOffsetTPC:      -0.400e3
 services.SpaceCharge.EnableSimSpatialSCE: true
-services.SpaceCharge.EnableSimEfieldSCE: true
+services.SpaceCharge.EnableSimEfieldSCE:  true
 
 #services.FileCatalogMetadata.applicationVersion: "develop"
 #services.FileCatalogMetadata.fileType: "mc"

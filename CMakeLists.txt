@@ -2,9 +2,6 @@ set( LARLITE_LIB -L$ENV{LARLITE_LIBDIR} -lLArLite_Analysis -lLArLite_LArUtil -lL
 
 set( UBOONECODE_LIB -L$ENV{UBOONECODE_LIB} )
 
-#set( Torch_DIR $ENV{LIBTORCH_DIR}/share/cmake/Torch )
-#set( Caffe2_DIR $ENV{LIBTORCH_DIR}/share/cmake/Caffe2 )
-
 include_directories ( $ENV{LARLITE_COREDIR} ${LARCV_INCLUDE_DIR} $ENV{UBLARCVAPP_INCDIR} ${PYTHON_INCLUDE_DIRS} )
 message("python ${PYTHON_INCLUDE_DIRS}")
 message("python ${PYTHON_LIBRARIES}")
@@ -17,6 +14,7 @@ if (Torch_FOUND)
 else()
   link_libraries( ${LIB_NAME} -L$ENV{BOOST_LIB} -lboost_system ${ROOTLIB} ${LARLITE_LIB} ${ublarcvapp_LIBRARIES} $PYTHON_LIBRARIES) 
 endif()
+add_definitions("-Wno-register")
 
 art_make( BASENAME_ONLY
 	  LIBRARY_NAME     ubcv_ubdlintegration

@@ -648,6 +648,7 @@ int DLInterface::runSSNetServer( const int run, const int subrun, const int even
 
   // mcc9 vs mcc8 scale factors
   float mcc9vs8_scale[3] = { 43.0/53.0, 43.0/52.0, 48.0/59.0 };
+  float adc_threshold[3] = { 10.0, 10.0, 10.0 };
 
   // create the data
   //std::cout << "RunSSNetServer: serialize" << std::endl;
@@ -660,7 +661,12 @@ int DLInterface::runSSNetServer( const int run, const int subrun, const int even
     int plane = img.meta().plane();
     int iid   = zmsg_v[plane].size();
 
+    // scale to mcc8 values and threshold
     img.scale_inplace( mcc9vs8_scale[plane] );
+    std::vector<float>& imgdata = img.as_mod_vector();
+    for ( size_t i=0; i<imgdata.size(); i++ ) 
+      if ( imgdata[i]<adc_threshold[plane] )
+	imgdata[i] = 0;
 
     // make a binary json string
     std::vector<std::uint8_t> bson 

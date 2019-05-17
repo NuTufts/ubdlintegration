@@ -261,9 +261,10 @@ DLInterface::DLInterface(fhicl::ParameterSet const & p)
   cet::search_path finder("FHICL_FILE_PATH");
   if( !finder.find_file(_supera_config, supera_cfg) )
     throw cet::exception("DLInterface") << "Unable to find supera cfg in "  << finder.to_string() << "\n";
+  std::cout << "LOADING supera config: " << supera_cfg << std::endl;
 
   // check cfg content top level
-  larcv::PSet main_cfg = larcv::CreatePSetFromFile(_supera_config).get<larcv::PSet>("ProcessDriver");
+  larcv::PSet main_cfg = larcv::CreatePSetFromFile(supera_cfg).get<larcv::PSet>("ProcessDriver");
 
   // get list of processors
   std::vector<std::string> process_names = main_cfg.get< std::vector<std::string> >("ProcessName");
@@ -276,7 +277,7 @@ DLInterface::DLInterface(fhicl::ParameterSet const & p)
   }
 
   // configure supera (convert art::Event::CalMod -> Image2D)
-  _supera.configure(_supera_config);
+  _supera.configure(supera_cfg);
 
   // configure image splitter (fullimage into detsplit image)
   _imagesplitter.configure( split_cfg );

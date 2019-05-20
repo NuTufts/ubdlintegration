@@ -886,8 +886,8 @@ int DLInterface::runPyTorchCPU( const std::vector<larcv::Image2D>& wholeview_v,
     }
 
     // output is {1,3,H,W} with values being log(softmax)
-    at::Tensor shower_slice = output.slice(1, 1, 2).exp(); // dim, start, end
-    at::Tensor track_slice  = output.slice(1, 2, 3).exp();
+    at::Tensor shower_slice = output.slice(1, 1, 2); // dim, start, end
+    at::Tensor track_slice  = output.slice(1, 2, 3);
     //std::cout << "img[" << iimg << "] slice dim=";
     // for ( int i=0; i<shower_slice.dim(); i++ )
     //   std::cout << shower_slice.size(i) << " ";
@@ -1071,12 +1071,15 @@ void DLInterface::loadNetwork_PyTorchCPU() {
   for ( size_t iscript=0; iscript<_pytorch_net_script.size(); iscript++ ) {
     std::cout << "Loading network[" << iscript << "] from " 
 	      << _pytorch_net_script[iscript] << " .... " << std::endl;
-    try {
-      _module_ubssnet.push_back( torch::jit::load( _pytorch_net_script[iscript] ) );
-    }
-    catch (...) {
-      throw cet::exception("DLInterface") << "Could not load model from " << _pytorch_net_script[iscript] << std::endl;
-    }
+    
+    std::string scriptpath;
+    cet::search_path finder("FHICL_FILE_PATH");
+    if( !finder.find_file(_pytorch_net_script[iscript], scriptpath) )
+      throw cet::exception("DLInterface") << "Unable to find torch script in "  << finder.to_string() << "\n";
+    std::cout << "LOADING pytorch model data: " << scriptpath << std::endl;
+
+    _module_ubssnet.push_back( torch::jit::load( scriptpath ) );
+
   }
   std::cout << "Networks Loaded" << std::endl;
 #endif

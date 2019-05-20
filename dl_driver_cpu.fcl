@@ -11,9 +11,9 @@ DLInterface: {
   PixelThresholdsForSavedScoresPerPlane: [5.0,5.0,5.0]
   NetInterface:        "PyTorchCPU"
   SuperaConfigFile:    "supera_ssnetinterface.fcl"
-  PyTorchNetScript:    ["/pnfs/uboone/resilient/users/tmw/model_data/mcc8_caffe_ubssnet_plane0.pytorchscript",
-                        "/pnfs/uboone/resilient/users/tmw/model_data/mcc8_caffe_ubssnet_plane1.pytorchscript",
-                        "/pnfs/uboone/resilient/users/tmw/model_data/mcc8_caffe_ubssnet_plane2.pytorchscript"]
+  PyTorchNetScript:    ["mcc8_caffe_ubssnet_plane0.pytorchscript",
+                        "mcc8_caffe_ubssnet_plane1.pytorchscript",
+                        "mcc8_caffe_ubssnet_plane2.pytorchscript"]
   CroppingMethod:      "FlashCROI"
   OpFlashProducerName: "simpleFlashBeam"
   SaveDetsplitImagesInput:     false

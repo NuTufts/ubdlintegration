@@ -91,6 +91,7 @@ public:
 private:
 
   // Declare member data here.
+  int _verbosity;
 
   // supera/image formation
   larcv::LArCVSuperaDriver _supera;  
@@ -138,6 +139,9 @@ private:
   std::string      _ssh_username;
   std::string      _broker_address;
   std::string      _broker_port;
+  int              _client_timeout_secs;
+  int              _request_max_tries;
+  int              _max_n_broker_reconnect;
   zmq::context_t*  _context;
   zmq::socket_t*   _socket; 
   zmq::pollitem_t* _poller;
@@ -158,10 +162,15 @@ private:
 		      std::vector<larcv::ROI>& splitroi_v, 
 		      std::vector<larcv::Image2D>& showerout_v,
 		      std::vector<larcv::Image2D>& trackout_v );
-
+  
   // interface: dummy server (for debug)
   int runDummyServer( art::Event& e );
   void sendDummyMessage();
+  size_t sendSSNetPlaneImages( const int plane,
+			       const std::vector<int>& reply_ok,
+			       std::vector< zmq::message_t >& zmsg_v,
+			       bool debug );
+
 
   // merger/post-processing
   void mergeSSNetOutput( const std::vector<larcv::Image2D>& wholeview_v, 
@@ -236,6 +245,9 @@ DLInterface::DLInterface(fhicl::ParameterSet const & p)
     _ssh_username   = server_pset.get<std::string>("SSHUsername");
     _broker_address = server_pset.get<std::string>("BrokerAddress");
     _broker_port    = server_pset.get<std::string>("BrokerPort");
+    _client_timeout_secs    = server_pset.get<int>("RequestTimeoutSecs",60);
+    _request_max_tries      = server_pset.get<int>("RequestMaxTries",3);
+    _max_n_broker_reconnect = server_pset.get<int>("MaxBrokerReconnects",3);
   }
 
 
@@ -289,9 +301,9 @@ DLInterface::DLInterface(fhicl::ParameterSet const & p)
   _pixelthresholds_forsavedscores = p.get< std::vector<float> >("PixelThresholdsForSavedScoresPerPlane");
 
   // verbosity
-  int verbosity = p.get<int>("Verbosity",2);
-  set_verbosity( (::larcv::msg::Level_t) verbosity );
-  _supera.set_verbosity( (::larcv::msg::Level_t) verbosity );
+  _verbosity = p.get<int>("Verbosity",2);
+  set_verbosity( (::larcv::msg::Level_t) _verbosity );
+  _supera.set_verbosity( (::larcv::msg::Level_t) _verbosity );
 
 }
 
@@ -633,6 +645,19 @@ size_t DLInterface::serializeImages( const size_t nplanes,
  * 
  * run ssnet via GPU server
  *
+ * takes the list of split images then
+ *  1. serializes them
+ *  2. sends request to broker
+ *  3. receives reply
+ *  4. checks reply
+ *  5. converts back to Image2D
+ *
+ * the client will send the request and wait (_client_timeout_secs) seconds
+ * for the response to come in. The client will try to request
+ * a max number of (_request_max_tries) times.  Upon receiving data,
+ * the client will check to see that the data is the correct one, using
+ * (run,subrun,event,iid) information. If not correct or incomplete, 
+ * request is sent again, for a total of (_request_max_tries) tries.
  * 
  */
 int DLInterface::runSSNetServer( const int run, const int subrun, const int event, 
@@ -641,19 +666,14 @@ int DLInterface::runSSNetServer( const int run, const int subrun, const int even
 				 std::vector<larcv::ROI>& splitroi_v, 
 				 std::vector<larcv::Image2D>& showerout_v,
 				 std::vector<larcv::Image2D>& trackout_v ) {
-  int status = 0;
 
-  // codes
-  const std::uint8_t empty = 0;
-  const char request       = '\002';
-  zmq::message_t header_msg (6);
-  memcpy (header_msg.data (), "MDPC02", 6);
+  bool debug  = ( _verbosity==0 ) ? true : false;
 
   // mcc9 vs mcc8 scale factors
   float mcc9vs8_scale[3] = { 43.0/53.0, 43.0/52.0, 48.0/59.0 };
   float adc_threshold[3] = { 10.0, 10.0, 10.0 };
 
-  // create the data
+  // create the messages for the data (i.e. serialize)
   //std::cout << "RunSSNetServer: serialize" << std::endl;
   std::vector< zmq::message_t > zmsg_v[3];
 
@@ -681,111 +701,120 @@ int DLInterface::runSSNetServer( const int run, const int subrun, const int even
   }
 
 
+  int n_timeout = 0; // number of times we've timedout waiting for reply
+  int ntries    = 0; // number of tries to get complete response
+
   for ( size_t plane=0; plane<3; plane++ ) {
+
     // send the message according to majortomo protocol
-    //std::cout << "RunSSNetServer: send Plane[" << plane << "] images. "
-    //	      << "nimages=" << zmsg_v[plane].size() 
-    //        << std::endl;
-
-    // service name
-    char service_name[20];
-    sprintf(service_name,"ubssnet_plane%d",(int)plane);
-
-    // send the message parts    
-    //std::cout << "  debug: send empty" << std::endl;
-    _socket->send( (char*)empty,       0, ZMQ_SNDMORE );
-    //std::cout << "  debug: send header" << std::endl;
-    _socket->send( header_msg.data(),  6, ZMQ_SNDMORE );
-    //std::cout << "  debug: send request command" << std::endl;
-    _socket->send( (char*)&request, 1, ZMQ_SNDMORE );
-    //std::cout << "  debug: send service name" << std::endl;
-    _socket->send( service_name,   14, ZMQ_SNDMORE );
-
-    size_t nimgs = zmsg_v[plane].size();
-    for ( size_t imsg=0; imsg<nimgs; imsg++ ) {
-      //std::vector<std::uint8_t>& msg = msg_v[plane].at(imsg);
-      zmq::message_t& zmsg = zmsg_v[plane].at(imsg);
-
-      //std::cout << "  debug: send img[" << imsg << "]" << std::endl;
-      if (imsg+1<nimgs)
-    	_socket->send( zmsg.data(), zmsg.size(), ZMQ_SNDMORE );
-      else {
-    	_socket->send( zmsg.data(), zmsg.size(), 0 );
-	//std::cout << "  final image." << std::endl;
-      }
+    if ( debug ) {
+      std::cout << "RunSSNetServer: process Plane[" << plane << "] images. "
+		<< "nimages=" << zmsg_v[plane].size() 
+		<< std::endl;
     }
 
+    size_t nimgs = zmsg_v[plane].size();
+    
+    std::vector<int>             ok_v( nimgs, 0 ); // track good messages
+    bool is_complete = false;                      // true, when all messages responses collected
 
-    // poll for a response
-    int more;
-    bool isfinal = false;
-    std::vector< zmq::message_t > zreply_v;
+    std::vector< larcv::Image2D > shr_v;           // shower images
+    std::vector< larcv::Image2D > trk_v;           // track  images
 
-    while ( !isfinal ) {
 
-      zmq::poll( _poller, 1, -1 );
-      if ( _poller->revents & ZMQ_POLLIN ) {
+    while ( !is_complete && ntries<_request_max_tries ) {
 
-	// receive multi-part: keep receiving until done
-	// expect reply with at least 4 parts: [empty] [WORKER HEADER] [PARTIAL/FINAL] [DATA ...]
-	std::vector< zmq::message_t > part_v;
+      ntries += 1;
 
-	while ( 1 ) {
+      // send the images
+      // we only sned images where ok_v[iimg]==False
+      sendSSNetPlaneImages( (int)plane, ok_v, zmsg_v[plane], debug );
 
-	  zmq::message_t reply;
-	  _socket->recv( &reply );
-	  size_t more_size = sizeof(more);
-	  _socket->getsockopt(ZMQ_RCVMORE,&more,&more_size);
+      // poll for a response
+      bool isfinal = false; // final msg received
+      std::vector< zmq::message_t > zreply_v; // reply container
 
+      while ( !isfinal ) {
+
+	zmq::poll( _poller, 1, _client_timeout_secs*100000 ); // last argument is in microseconds
+
+	if ( n_timeout<_max_n_broker_reconnect
+	     &&  _poller->revents & ZMQ_POLLERR ) {
+	  n_timeout += 1;
+	  std::cout << "Timed out waiting for response " 
+		    << "(" << _client_timeout_secs << " secs)" << std::endl;
+	  continue;
+	}
+	else if ( n_timeout==_max_n_broker_reconnect ) {
+	  std::cout << "Too many reconnections to the brokers "
+		    << "(" << n_timeout << "): stopped."
+		    << std::endl;
+	  // we've failed
+	  return 1; 
+	}
+	else if ( _poller->revents & ZMQ_POLLIN ) {
+
+	  // receive multi-part: keep receiving until done
+	  // expect reply with at least 4 parts: [empty] [WORKER HEADER] [PARTIAL/FINAL] [DATA ...]
+
+	  // reset timeout counter, as we've successfully communicated with broker
+	  n_timeout = 0;
 	  
-	  part_v.emplace_back( std::move(reply) );
-	  
-	  if ( !more )
+	  int more = 1;                         // more parts coming
+	  std::vector< zmq::message_t > part_v; // store parts
+	  int nparts = 0;
+
+	  while ( more==1 && nparts<100 ) {
+	    zmq::message_t reply;
+	    _socket->recv( &reply );
+	    size_t more_size = sizeof(more);
+	    _socket->getsockopt(ZMQ_RCVMORE,&more,&more_size);
+	    part_v.emplace_back( std::move(reply) );
+	    if ( debug ) std::cout << "    received msg part=" << nparts << " more=" << more << std::endl;
+	    nparts++;
+	  }
+	  if ( debug )  {
+	    std::cout << "  Plane[" << plane << "]"
+		      << "  Received in batch: " << part_v.size()  << ".  "
+		      << "  Expect >= 4 parts."
+		      << std::endl;
+	  }
+
+	  // parse
+	  bool ok = true;
+	  if ( part_v.at(0).size()!=0 ) {
+	    ok = false;
+	    std::cerr << "  first msg not empy!" << std::endl;
+	  }
+	  std::string reply_header = (char*)part_v.at(1).data();
+	  //std::cout << "  reply header: " << reply_header << std::endl;
+	  if ( ok && reply_header!="MDPC02" ) {
+	    ok = false;
+	    std::cerr << "  wrong header." << std::endl;
+	  }
+	  if ( ok ) {
+	    //std::cout << "  [partial/final] = " << (char*)part_v.at(2).data() << std::endl;
+	    if ( *((char*)part_v.at(2).data())=='\004' ) {
+	      isfinal = true;
+	      if ( debug ) std::cout << "  final marker received" << std::endl;
+	    }
+	    for ( size_t i=3; i<part_v.size(); i++ ) {
+	      zreply_v.emplace_back( std::move(part_v[i]) );
+	    }
+	  }
+	  if ( !ok ) {
+	    std::cerr << "Error in parser" << std::endl;
 	    break;
-	}
-	// std::cout << "  Plane[" << plane << "]"
-	// 	  << "  Received in batch: " << part_v.size() 
-	// 	  << std::endl;
-
-	// parse
-	bool ok = true;
-	if ( part_v.at(0).size()!=0 ) {
-	  ok = false;
-	  std::cerr << "  first msg not empy!" << std::endl;
-	}
-	std::string reply_header = (char*)part_v.at(1).data();
-	//std::cout << "  reply header: " << reply_header << std::endl;
-	if ( ok && reply_header!="MDPC02" ) {
-	  ok = false;
-	  std::cerr << "  wrong header." << std::endl;
-	}
-	if ( ok ) {
-	  //std::cout << "  [partial/final] = " << (char*)part_v.at(2).data() << std::endl;
-	  if ( *((char*)part_v.at(2).data())=='\004' ) {
-	    isfinal = true;
-	    //std::cout << "  final marker received" << std::endl;
 	  }
-	  for ( size_t i=3; i<part_v.size(); i++ ) {
-	    zreply_v.emplace_back( std::move(part_v[i]) );
-	  }
-	}
-	if ( !ok ) {
-	  std::cerr << "Error in parser" << std::endl;
-	  break;
-	}
 	
-      }//end of if poll-in found
-    }//end of is final loop
-    //std::cout << " Number of replies: " << zreply_v.size() << std::endl;
+	} // end of if poll-in found
+      }//end of isfinal loop
 
-    // we check if we got all of them back
-    // we expect two images back per sent (track+shower scores)
-    bool isgood = true;
-    std::vector<int> ok_v( nimgs, 0 );
-    std::vector< larcv::Image2D > shr_v;
-    std::vector< larcv::Image2D > trk_v;
 
-    if ( zreply_v.size()==2*nimgs ) {
+      if ( debug ) std::cout << " Number of replies: " << zreply_v.size() << std::endl;
+
+      // we check if we got all of them back
+      // we expect two images back per sent (track+shower scores)
 
       for ( auto& data : zreply_v ) {
 	// convert into vector of uint8_t
@@ -797,39 +826,37 @@ int DLInterface::runSSNetServer( const int run, const int subrun, const int even
 	larcv::json::rseid_from_json( j, rrun, rsubrun, revent, reid );
 	larcv::Image2D img = larcv::json::image2d_from_json( j );
 	if ( rrun==run && rsubrun==subrun && revent==event && reid>=0 && reid<(int)nimgs ) {
-	  //std::cout << "  expected reply " << img.meta().dump() << " reid=" << reid << std::endl;
-	  ok_v[ reid ]++;
-	  if ( ok_v[reid]==2 )
-	    trk_v.emplace_back( std::move(img) );
-	  else if ( ok_v[reid]==1 )
-	    shr_v.emplace_back( std::move(img) );
+	  if ( ok_v[reid]<2 ) {
+	    if ( debug ) std::cout << "  expected reply " << img.meta().dump() << " reid=" << reid << std::endl;
+	    ok_v[ reid ]++;
+	    if ( ok_v[reid]==2 )
+	      trk_v.emplace_back( std::move(img) );
+	    else if ( ok_v[reid]==1 )
+	      shr_v.emplace_back( std::move(img) );
+	  }
+	  else {
+	    if ( debug ) std::cout << "  repeat reply " << img.meta().dump() << " reid=" << reid << std::endl;
+	  }
 	}
 	else {
 	  std::cerr << "  Unexpected (run,subrun,event,id)" << std::endl;
-	  isgood = false;
-	  break;
 	}
       }//end of zreply_v loop
 
-    }
-    else {
-      isgood = false;
-      std::cerr << "   unexpected number of replies" << std::endl;
-    }
 
-    // final check
-    if ( isgood ) {
+      // check status of replies
+      is_complete = true;
       for ( size_t ii=0; ii<nimgs; ii++ ) {
 	if ( ok_v[ii]!=2 ) {
-	  isgood = false;
-	  std::cerr << "  Missing reply" << std::endl;
-	  break;
+	  is_complete = false;
+	  std::cerr << "  Missing reply imgid=" << ii << std::endl;
 	}
       }
-    }
+      
+    }//end of request loop
 
-    if ( isgood ) {
-      //std::cout << "  Replies look good!" << std::endl;
+    if ( is_complete ) {
+      if ( debug ) std::cout << "  Replies complete!" << std::endl;
       for ( auto& shr : shr_v ) {
 	showerout_v.emplace_back( std::move(shr) );
       }
@@ -837,11 +864,19 @@ int DLInterface::runSSNetServer( const int run, const int subrun, const int even
 	trackout_v.emplace_back( std::move(trk) );
       }
     }
+    else {
+      std::cerr << "Incomplete set of images processed for Plane=" << plane << std::endl;
+      return 1;
+    }
+    
+    // reset counters
+    ntries = 0;
+    n_timeout = 0;
 
   }//end of loop over planes
     
-     
-  return status;
+  // return ok status
+  return 0;
 }
 
 
@@ -1162,6 +1197,65 @@ void DLInterface::sendDummyMessage() {
   }
   
   std::cout << "end of sendDummyMessage()" << std::endl;
+}
+
+size_t DLInterface::sendSSNetPlaneImages( const int plane,
+					  const std::vector<int>& reply_ok,
+					  std::vector< zmq::message_t >& zmsg_v,
+					  bool debug ) {
+  
+  // service name
+  char service_name[20];
+  sprintf(service_name,"ubssnet_plane%d",plane);
+
+  // message header codes
+  const std::uint8_t empty = 0;
+  const char request       = '\002';
+  zmq::message_t header_msg (6);
+  memcpy (header_msg.data (), "MDPC02", 6);
+
+
+  // header
+  // ------
+  
+  if (debug) std::cout << "  debug: send empty" << std::endl;
+  _socket->send( (char*)empty,       0, ZMQ_SNDMORE );
+  if (debug) std::cout << "  debug: send header" << std::endl;
+  _socket->send( header_msg.data(),  6, ZMQ_SNDMORE );
+  if (debug) std::cout << "  debug: send request command" << std::endl;
+  _socket->send( (char*)&request, 1, ZMQ_SNDMORE );
+  if (debug) std::cout << "  debug: send service name" << std::endl;
+  _socket->send( service_name,   14, ZMQ_SNDMORE );
+
+  size_t nimgs = zmsg_v.size();
+  
+  // last image
+  size_t last_index = 0;
+  for ( size_t imsg=0; imsg<nimgs; imsg++ ) {
+    if ( reply_ok[imsg] ) continue;
+    last_index = imsg;
+  }
+
+  // data
+  // ----
+  size_t nsent = 0;
+  for ( size_t imsg=0; imsg<nimgs; imsg++ ) {
+    if ( reply_ok[imsg]>0 ) continue;
+    zmq::message_t& zmsg = zmsg_v.at(imsg);
+
+    if (imsg!=last_index) {
+      if ( debug ) std::cout << "  debug: send img[" << imsg << "]" << std::endl;
+      _socket->send( zmsg.data(), zmsg.size(), ZMQ_SNDMORE );
+      nsent++;
+    }
+    else {
+      if ( debug ) std::cout << "  debug: send final img[" << imsg << "]" << std::endl;
+      _socket->send( zmsg.data(), zmsg.size(), 0 );
+      nsent++;
+    }
+  }
+  
+  return nsent;
 }
 
 

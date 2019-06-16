@@ -2,9 +2,10 @@ set( LARLITE_LIB -L$ENV{LARLITE_LIBDIR} -lLArLite_Analysis -lLArLite_LArUtil -lL
 
 set( UBOONECODE_LIB -L$ENV{UBOONECODE_LIB} )
 
-include_directories ( $ENV{LARLITE_COREDIR} ${LARCV_INCLUDE_DIR} $ENV{UBLARCVAPP_INCDIR} ${PYTHON_INCLUDE_DIRS} )
+include_directories ( $ENV{LARLITE_COREDIR} ${LARCV_INCLUDE_DIR} $ENV{UBLARCVAPP_INCDIR} ${PYTHON_INCLUDE_DIRS} ${ZeroMQ_INCLUDE_DIR} )
 message("python ${PYTHON_INCLUDE_DIRS}")
 message("python ${PYTHON_LIBRARIES}")
+message("ZMQ lib: ${ZeroMQ_LIBRARY}")
 
 set(CMAKE_CXX_STANDARD 17)
 if (Torch_FOUND)
@@ -47,10 +48,15 @@ art_make( BASENAME_ONLY
 		   
 		   ${FHICLCPP}
 		   cetlib cetlib_except
+		   LArCVCoreBase
+		   LArCVCoreDataFormat
+		   LArCVCoreProcessor
+		   LArCVCoreJSON
 		   ${ROOT_GEOM}
 		   ${ROOT_XMLIO}
 		   ${ROOT_GDML}
 		   ${ROOT_BASIC_LIB_LIST}
+		   ${ZeroMQ_LIBRARY}
 
           MODULE_LIBRARIES 	  	
 	  	   uboonecode_uboone_LArCVImageMaker
@@ -103,9 +109,9 @@ art_make( BASENAME_ONLY
 		)
 
 if (Torch_FOUND)
-   target_link_libraries( DLInterface_module cppzmq LArCVCoreBase LArCVCoreDataFormat LArCVCoreProcessor LArCVCoreJSON LArCVCoreTorchUtil LArCVApp_UBImageMod LArCVApp_ubdllee)
+   target_link_libraries( DLInterface_module cppzmq ${ZeroMQ_LIBRARY} LArCVCoreBase LArCVCoreDataFormat LArCVCoreProcessor LArCVCoreJSON LArCVCoreTorchUtil LArCVApp_UBImageMod LArCVApp_ubdllee)
 else()
-   target_link_libraries( DLInterface_module cppzmq LArCVCoreBase LArCVCoreDataFormat LArCVCoreProcessor LArCVCoreJSON LArCVApp_UBImageMod LArCVApp_ubdllee)
+   target_link_libraries( DLInterface_module cppzmq ${ZeroMQ_LIBRARY} LArCVCoreBase LArCVCoreDataFormat LArCVCoreProcessor LArCVCoreJSON LArCVApp_UBImageMod LArCVApp_ubdllee)
 endif()
 
 

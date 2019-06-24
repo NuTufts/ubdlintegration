@@ -47,10 +47,10 @@ namespace dl {
    * 
    */  
   int ServerInterface::sendReceiveSparseImageData( const std::string service_name,
-						    const std::vector<larcv::SparseImage>& outgoing_v, 
-						    std::vector< std::vector<larcv::SparseImage> >& incoming_vv,
-						    const int run, const int subrun, const int event,						  
-						    int expected_reply_ratio, bool debug ) {
+						   const std::vector<larcv::SparseImage>& outgoing_v, 
+						   std::vector< std::vector<larcv::SparseImage> >& incoming_vv,
+						   const int run, const int subrun, const int event,						  
+						   int expected_reply_ratio, bool debug ) {
     // -------------------------------------------------------------------
     // first we need to make the zmq messages
 
@@ -87,8 +87,11 @@ namespace dl {
     std::vector<int>   ok_v( nimgs, 0 ); // track num good replies/images returned
     bool is_complete = false;            // true, when all messages responses collected
 
-    while ( !is_complete && ntries<_request_max_tries ) {
+    incoming_vv.clear();
+    incoming_vv.resize( nimgs );
 
+    while ( !is_complete && ntries<_request_max_tries ) {
+      if ( debug ) std::cout << "Receive attempt[" << ntries << "]" << std::endl;
       ntries += 1;
 
       // send the images
@@ -177,22 +180,27 @@ namespace dl {
       if ( debug ) std::cout << " Number of replies: " << zreply_v.size() << std::endl;
 
       // we check if we got all of them back
-      // we expect two images back per sent (track+shower scores)
-
+      int ireply = -1;
       for ( auto& data : zreply_v ) {
+	ireply++;
 
 	// convert into vector of uint8_t
+	if ( debug ) std::cout << "  copy reply[" << ireply << "] into bson_v " << std::endl;
+
 	std::vector< std::uint8_t > bson( data.size(), 0 );
 	memcpy( bson.data(), data.data(), data.size() );
 
 	// convert into image
+	if ( debug ) std::cout << "  convert bson[" << ireply << "] into larcv::SparseImage" << std::endl;
 	nlohmann::json j = larcv::json::json_from_bson( bson );
 	int rrun,rsubrun,revent,reid; // returned IDs
 	larcv::json::rseid_from_json( j, rrun, rsubrun, revent, reid );
 	larcv::SparseImage img = larcv::json::sparseimg_fromjson( j );
 
 	if ( rrun==run && rsubrun==subrun && revent==event && reid>=0 && reid<(int)nimgs ) {
-	  
+	  if ( debug ) 
+	    std::cout << "  reply[" << ireply << "] has expected ID numbers: "
+		      << rrun << ", " << rsubrun << ", " << revent << ", " << reid << std::endl;
 	  if ( ok_v[reid]<expected_reply_ratio ) {
 	    incoming_vv.at( reid ).emplace_back( std::move(img) );
 	    ok_v[reid] = incoming_vv[reid].size();

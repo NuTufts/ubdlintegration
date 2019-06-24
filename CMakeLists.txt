@@ -2,18 +2,22 @@ set( LARLITE_LIB -L$ENV{LARLITE_LIBDIR} -lLArLite_Analysis -lLArLite_LArUtil -lL
 
 set( UBOONECODE_LIB -L$ENV{UBOONECODE_LIB} )
 
-include_directories ( $ENV{LARLITE_COREDIR} ${LARCV_INCLUDE_DIR} $ENV{UBLARCVAPP_INCDIR} ${PYTHON_INCLUDE_DIRS} ${ZeroMQ_INCLUDE_DIR} )
+include_directories ( $ENV{LARLITE_COREDIR} ${LARCV_INCLUDE_DIR} $ENV{UBLARCVAPP_INCDIR} $ENV{LARFLOW_INCDIR} ${PYTHON_INCLUDE_DIRS} ${ZeroMQ_INCLUDE_DIR} ${OpenCV_INCLUDE_DIRS})
 message("python ${PYTHON_INCLUDE_DIRS}")
 message("python ${PYTHON_LIBRARIES}")
+message("opencv: ${OpenCV_LIBS}")
 message("ZMQ lib: ${ZeroMQ_LIBRARY}")
+message("ublarcvapp LIBS: ${ublarcvapp_LIBRARIES}")
+message("LARFLOW LIBS: ${larflow_LIBRARIES}")
+message("LARFLOW INC: $ENV{LARFLOW_INCDIR}")
 
 set(CMAKE_CXX_STANDARD 17)
 if (Torch_FOUND)
   include_directories ( ${TORCH_INCLUDE_DIRS} )
-  link_libraries( ${LIB_NAME} -L$ENV{BOOST_LIB} -lboost_system ${ROOTLIB} ${LARLITE_LIB} ${ublarcvapp_LIBRARIES} ${TORCH_LIBRARIES} ${PYTHON_LIBRARIES} ) 
+  link_libraries( ${LIB_NAME} -L$ENV{BOOST_LIB} -lboost_system ${ROOTLIB} ${LARLITE_LIB} ${ublarcvapp_LIBRARIES} ${larflow_LIBRARIES} ${TORCH_LIBRARIES} ${OpenCV_LIBS} ${PYTHON_LIBRARIES} ) 
   set(CMAKE_CXX_FLAGS  "${CMAKE_CXX_FLAGS} -DHAS_TORCH")
 else()
-  link_libraries( ${LIB_NAME} -L$ENV{BOOST_LIB} -lboost_system ${ROOTLIB} ${LARLITE_LIB} ${ublarcvapp_LIBRARIES} $PYTHON_LIBRARIES) 
+  link_libraries( ${LIB_NAME} -L$ENV{BOOST_LIB} -lboost_system ${ROOTLIB} ${LARLITE_LIB} ${ublarcvapp_LIBRARIES} ${larflow_LIBRARIES} ${OpenCV_LIBS} $PYTHON_LIBRARIES) 
 endif()
 add_definitions("-Wno-register")
 
@@ -48,6 +52,7 @@ art_make( BASENAME_ONLY
 		   
 		   ${FHICLCPP}
 		   cetlib cetlib_except
+		   LArFlow_FlowContourMatch
 		   LArCVCoreBase
 		   LArCVCoreDataFormat
 		   LArCVCoreProcessor
@@ -59,6 +64,7 @@ art_make( BASENAME_ONLY
 		   ${ZeroMQ_LIBRARY}
 
           MODULE_LIBRARIES 	  	
+	  	   ubcv_ubdlintegration
 	  	   uboonecode_uboone_LArCVImageMaker
 		   ubcv_ubdldata
 	      	   TFileMetadataMicroBooNE_service
@@ -109,9 +115,9 @@ art_make( BASENAME_ONLY
 		)
 
 if (Torch_FOUND)
-   target_link_libraries( DLInterface_module cppzmq ${ZeroMQ_LIBRARY} LArCVCoreBase LArCVCoreDataFormat LArCVCoreProcessor LArCVCoreJSON LArCVCoreTorchUtil LArCVApp_UBImageMod LArCVApp_ubdllee)
+   target_link_libraries( DLInterface_module cppzmq ${ZeroMQ_LIBRARY} LArCVCoreBase LArCVCoreDataFormat LArCVCoreProcessor LArCVCoreJSON LArCVCoreTorchUtil LArCVApp_UBImageMod LArCVApp_ubdllee LArFlow_FlowContourMatch)
 else()
-   target_link_libraries( DLInterface_module cppzmq ${ZeroMQ_LIBRARY} LArCVCoreBase LArCVCoreDataFormat LArCVCoreProcessor LArCVCoreJSON LArCVApp_UBImageMod LArCVApp_ubdllee)
+   target_link_libraries( DLInterface_module cppzmq ${ZeroMQ_LIBRARY} LArCVCoreBase LArCVCoreDataFormat LArCVCoreProcessor LArCVCoreJSON LArCVApp_UBImageMod LArCVApp_ubdllee LArFlow_FlowContourMatch)
 endif()
 
 

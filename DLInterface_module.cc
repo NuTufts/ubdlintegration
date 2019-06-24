@@ -63,6 +63,11 @@
 
 // larcv torch utils
 #include "larcv/core/TorchUtil/TorchUtils.h"
+
+// dlintegration modules
+#include "ServerInterface.h"
+#include "LArFlow.h"
+#include "SSNet.h"
 #endif
 
 class DLInterface;
@@ -74,7 +79,7 @@ public:
   // The compiler-generated destructor is fine for non-base
   // classes without bare pointers or other resource use.
 
-  typedef enum { kServer=0, kPyTorchCPU, kTensorFlowCPU, kDummyServer } NetInterface_t;
+  typedef enum { kDoNotRun=0, kServer, kPyTorchCPU, kTensorFlowCPU, kDummyServer } NetInterface_t;
   typedef enum { kWholeImageSplitter=0, kFlashCROI } Cropper_t;
 
   // Plugins should not be copied or assigned.
@@ -100,14 +105,17 @@ private:
   int runSupera( art::Event& e, std::vector<larcv::Image2D>& wholeview_imgs );
 
   // image processing/splitting/cropping
-  Cropper_t   _cropping_method;
-  std::string _cropping_method_name;
+  bool _make_wholeimg_crops;
+  bool _make_flashroi_crops;
+  Cropper_t _ssnet_crop_method;
   ublarcvapp::UBSplitDetector _imagesplitter; //< full splitter
   ublarcvapp::ubdllee::FixedCROIFromFlashAlgo _croifromflashalgo; //< croi from flash
+  std::string _ubcrop_trueflow_cfg; //< config for the splitting and cropping algorithm
   bool        _save_detsplit_input;
   bool        _save_detsplit_output;
   std::string _opflash_producer_name;
-  std::vector<larcv::Image2D> _splitimg_v;              //< container holding split images
+  std::vector<larcv::Image2D> _splitimg_v; //< container holding split images
+  std::vector<larcv::Image2D> _flashroi_v; //< container holding split images
   int runWholeViewSplitter( const std::vector<larcv::Image2D>& wholeview_v, 
 			    std::vector<larcv::Image2D>& splitimg_v,
 			    std::vector<larcv::ROI>&     splitroi_v );
@@ -117,7 +125,9 @@ private:
 			std::vector<larcv::ROI>&     splitroi_v );
   
   // the network interface to run
-  NetInterface_t _interface;
+  NetInterface_t _ssnet_mode;
+  NetInterface_t _larflow_mode;
+  bool _connect_to_server;
 
   // interface: pytorch cpu
   std::vector<std::string> _pytorch_net_script; // one for each plane
@@ -134,9 +144,6 @@ private:
   
 
   // interface: server (common)
-  bool             _use_ssh_tunnel;
-  std::string      _ssh_address;
-  std::string      _ssh_username;
   std::string      _broker_address;
   std::string      _broker_port;
   int              _client_timeout_secs;
@@ -145,6 +152,7 @@ private:
   zmq::context_t*  _context;
   zmq::socket_t*   _socket; 
   zmq::pollitem_t* _poller;
+  dl::LArFlow*     _larflow_server;
   
   void openServerSocket();
   void closeServerSocket();
@@ -162,6 +170,15 @@ private:
 		      std::vector<larcv::ROI>& splitroi_v, 
 		      std::vector<larcv::Image2D>& showerout_v,
 		      std::vector<larcv::Image2D>& trackout_v );
+
+  // interface: larflow gpu server
+  int runLArFlowServer( const int run, const int subrun, const int event,
+			const std::vector<larcv::Image2D>& wholeview_v, 
+			std::vector<larcv::Image2D>& splitimg_v, 
+			std::vector<larcv::ROI>& splitroi_v, 
+			std::vector<larcv::SparseImage>& larflow_results_v,
+			std::vector<larlite::larflow3dhit>& larflow_hit_v );
+
   
   // interface: dummy server (for debug)
   int runDummyServer( art::Event& e );
@@ -181,11 +198,19 @@ private:
 			 std::vector<larcv::Image2D>& trackmerged_v );
 
   /// save to art::Event
-  void saveArtProducts( art::Event& ev,
-			const std::vector<larcv::Image2D>& wholeimg_v,
-			const std::vector<larcv::Image2D>& showermerged_v,
-			const std::vector<larcv::Image2D>& trackmerged_v );
+  void saveSSNetArtProducts( art::Event& ev,
+			     const std::vector<larcv::Image2D>& wholeimg_v,
+			     const std::vector<larcv::Image2D>& showermerged_v,
+			     const std::vector<larcv::Image2D>& trackmerged_v );
   std::vector<float> _pixelthresholds_forsavedscores;
+
+  void saveLArFlowArtProducts( art::Event& ev, 
+			       const std::vector<larcv::Image2D>& wholeimg_v,
+			       const std::vector<larcv::SparseImage>& larflow_results_v,
+			       std::vector<larlite::larflow3dhit>& larflow_hit_v,
+			       const std::vector<larcv::Image2D>& showermerged_v,
+			       const std::vector<larcv::Image2D>& trackmerged_v );
+
   
 
 };
@@ -199,7 +224,9 @@ DLInterface::DLInterface(fhicl::ParameterSet const & p)
     // Initialize member data here.
 {
   // Call appropriate produces<>() functions here.
-  produces< std::vector<ubdldata::pixeldata> >();
+  produces< std::vector<ubdldata::pixeldata> >( "ssnet" );
+  produces< std::vector<ubdldata::pixeldata> >( "larflowpixels" );
+  produces< std::vector<ubdldata::pixeldata> >( "larflowhits" );
 
   // read in parameters and configure
 
@@ -209,40 +236,47 @@ DLInterface::DLInterface(fhicl::ParameterSet const & p)
   // name of supera configuration file
   _supera_config      = p.get<std::string>("SuperaConfigFile");
 
-  // interace to network
-  std::string inter   = p.get<std::string>("NetInterface");
-  if ( inter=="Server" )
-    _interface = kServer;
-  else if ( inter=="PyTorchCPU" )
-    _interface = kPyTorchCPU;
-  else if ( inter=="TensorFlowCPU" )
-    _interface = kTensorFlowCPU;
-  else if ( inter=="DummyServer" ) // for debugging
-    _interface = kDummyServer;
-  else {
-    throw cet::exception("DLInterface") << "unrecognized network interface, " << inter << ". "
-					<< "choices: { Server, Pytorch, TensorFlow }"
-					<< std::endl;
+  // interace to network(s)
+  std::vector<string> networks_v;
+  networks_v.push_back("SSNet");
+  networks_v.push_back("LArFlow");
+  NetInterface_t* mode_v[2] = { &_ssnet_mode, 
+				&_larflow_mode };
+  
+  _connect_to_server = false;
+  for ( size_t inet=0; inet<2; inet++ ) {
+    std::string netname = networks_v.at(inet);
+    std::string inter   = p.get<std::string>(netname+"Mode","DoNotRun");
+    if ( inter=="DoNotRun" )
+      *mode_v[inet] = kDoNotRun;
+    else if ( inter=="Server" ) {
+      *mode_v[inet] = kServer;
+      _connect_to_server = true;
+    }
+    else if ( inter=="PyTorchCPU" )
+      *mode_v[inet] = kPyTorchCPU;
+    else if ( inter=="TensorFlowCPU" ) {
+      *mode_v[inet] = kTensorFlowCPU;
+      throw cet::exception("DLInterface") << "TensorFlowCPU interface not yet implemented" << std::endl;
+    }
+    else if ( inter=="DummyServer" ) // for debugging
+      *mode_v[inet] = kDummyServer;
+    else {
+      throw cet::exception("DLInterface") << "unrecognized network interface, " << inter << ". "
+					  << "choices: { DoNotRun, Server, PytorchCPU, TensorFlowCPU, DummyServer }"
+					  << std::endl;
+    }
+    LARCV_INFO() << "Network[ " << netname << " ] mode=" << inter << std::endl;
   }
 
-  // ==============================================================
+  // =================================
   //  INTERFACE SPECIFIC CONFIGS
-  //  --------------------------
+  //  --------------------------  
 
-  // TENSORFLOW CPU
-  // throw exception for interfaces that are not implemented yet
-  if ( _interface==kTensorFlowCPU )
-    throw cet::exception("DLInterface") << "TensorFlowCPU interface not yet implemented" << std::endl;
 
-  // PYTORCH CPU
-  
-
-  // SERVER (PYTORCH)
-  if ( _interface==kServer ) {
+  // If we are connecting to the server, get the parameters
+  if ( _connect_to_server ) {
     auto const server_pset = p.get<fhicl::ParameterSet>("ServerConfiguration");
-    _use_ssh_tunnel = server_pset.get<bool>("UseSSHtunnel");
-    _ssh_address    = server_pset.get<std::string>("SSHAddress");
-    _ssh_username   = server_pset.get<std::string>("SSHUsername");
     _broker_address = server_pset.get<std::string>("BrokerAddress");
     _broker_port    = server_pset.get<std::string>("BrokerPort");
     _client_timeout_secs    = server_pset.get<int>("RequestTimeoutSecs",60);
@@ -250,24 +284,44 @@ DLInterface::DLInterface(fhicl::ParameterSet const & p)
     _max_n_broker_reconnect = server_pset.get<int>("MaxBrokerReconnects",3);
   }
 
-
+  // =================================
   // Image cropping/splitting config
-  _cropping_method_name = p.get<std::string>("CroppingMethod");
-  if ( _cropping_method_name=="WholeImageSplitter" )
-    _cropping_method = kWholeImageSplitter;
-  else if ( _cropping_method_name=="FlashCROI" )
-    _cropping_method = kFlashCROI;
+  // -------------------------------
+  _make_wholeimg_crops = p.get<bool>("DoWholeImageCrop",true);
+  _make_flashroi_crops = p.get<bool>("DoFlashROICrop",true);
+
+  std::string ssnet_crop_method = p.get<std::string>("SSNetCropMethod","FlashCROI");
+  if ( ssnet_crop_method=="FlashCROI" )
+    _ssnet_crop_method = kFlashCROI;
+  else if ( ssnet_crop_method=="WholeImageSplitter" )
+    _ssnet_crop_method = kWholeImageSplitter;
   else {
-    throw cet::exception("DLInterface") << "invalid cropping method. "
-					<< "options: {\"WholeImageSplitter\",\"FlashCROI\"}" 
+    throw cet::exception("DLInterface") << "unrecognized crop method for SSNet, " << ssnet_crop_method << ". "
+					<< "choices: { FlashCROI, WholeImageSplitter }"
 					<< std::endl;
   }
-  _save_detsplit_input  = p.get<bool>("SaveDetsplitImagesInput");
-  _save_detsplit_output = p.get<bool>("SaveNetOutSplitImagesOutput");
-  if ( _cropping_method==kFlashCROI ) {
-    _opflash_producer_name = p.get<std::string>("OpFlashProducerName");
+  // override whole image splitter is ssnet requires it
+  if ( _ssnet_crop_method==kWholeImageSplitter ) {
+    _make_wholeimg_crops = true;
+    std::string splitter_cfg = p.get<std::string>("UBCropConfig","ubcrop.cfg");
+    cet::search_path split_finder("FHICL_FILE_PATH");
+    if( !split_finder.find_file(splitter_cfg,_ubcrop_trueflow_cfg) )
+      throw cet::exception("DLInterface") << "Unable to find UBSplitDet cfg in "  << split_finder.to_string() << "\n";
   }
 
+  if ( _make_wholeimg_crops ) {
+    _save_detsplit_input  = p.get<bool>("SaveDetsplitImagesInput",false);
+    _save_detsplit_output = p.get<bool>("SaveNetOutSplitImagesOutput",false);
+  }
+
+  if ( _make_flashroi_crops ) {
+    _opflash_producer_name = p.get<std::string>("OpFlashProducerName","SimpleFlashBeam");
+  }
+
+
+  // =================================
+  // Supera configuration
+  // -------------------------------
 
   std::string supera_cfg;
   cet::search_path finder("FHICL_FILE_PATH");
@@ -314,66 +368,139 @@ DLInterface::DLInterface(fhicl::ParameterSet const & p)
 void DLInterface::produce(art::Event & e)
 {
 
+  // ===============================================
   // get the wholeview images for the network
+  // ----------------------------------------
   std::vector<larcv::Image2D> wholeview_v;
   int nwholeview_imgs = runSupera( e, wholeview_v );
   LARCV_INFO() << "number of wholeview images: " << nwholeview_imgs << std::endl;
 
+  // ===============================================
+  // cropping
+  // ----------------------------------------
+
   // we often have to pre-process the image, e.g. split it.
   // eventually have options here. But for now, wholeview splitter
-  std::vector<larcv::Image2D> splitimg_v;
-  std::vector<larcv::ROI>     splitroi_v;
-
+  std::vector<larcv::Image2D> splitimg_v; // for whole-view splits
+  std::vector<larcv::ROI>     splitroi_v; // for whole-view splits
+  std::vector<larcv::Image2D> croiimg_v;  // for croi images
+  std::vector<larcv::ROI>     croi_v;     // for croi images
   
   int nsplit_imgs = 0;
-
-  switch (_cropping_method) {
-  case kWholeImageSplitter:
+  int ncroi_imgs  = 0;
+  if ( _make_wholeimg_crops )
     nsplit_imgs = runWholeViewSplitter( wholeview_v, splitimg_v, splitroi_v );
-    break;
-  case kFlashCROI:
-    nsplit_imgs = runCROIfromFlash( wholeview_v, e, splitimg_v, splitroi_v );
-    break;
-  }
+  if ( _make_flashroi_crops ) 
+    ncroi_imgs = runCROIfromFlash( wholeview_v, e, croiimg_v, croi_v );
 
-  LARCV_INFO() << "number of split images: " << nsplit_imgs << std::endl;
+  LARCV_INFO() << "number of whole-image crops: " << nsplit_imgs << std::endl;
+  LARCV_INFO() << "number of croi crops: " << ncroi_imgs << std::endl;
+  
+  // ==========================================
+  // run networks (or not)
 
-  // containers for outputs
-  std::vector<larcv::Image2D> showerout_v;
-  std::vector<larcv::Image2D> trackout_v;
+  // -------
+  // ssnet
+  // -------
+  int ssnet_status = 0;
 
-  // run network (or not)
+  // ssnet output containers
+  std::vector<larcv::Image2D> showerout_v; // crop scores
+  std::vector<larcv::Image2D> trackout_v;  // crop scores
+  std::vector<larcv::Image2D> showermerged_v; // merged scores
+  std::vector<larcv::Image2D> trackmerged_v;  // merged scores
 
-  int status = 0;
-  if ( splitimg_v.size()>0 ) {
-    switch (_interface) {
+  // choose ssnet input
+  std::vector<larcv::Image2D>* ssnet_input 
+    = ( _ssnet_crop_method==kFlashCROI ) ? &croiimg_v : &splitimg_v ;
+  std::vector<larcv::ROI>* ssnet_roi
+    = ( _ssnet_crop_method==kFlashCROI ) ? &croi_v : &splitroi_v ;
+
+  if ( ssnet_input->size() && _ssnet_mode!=kDoNotRun ) {
+    
+    switch (_ssnet_mode) {
     case kDummyServer:
     case kTensorFlowCPU:
-      status = runDummyServer(e);
+      ssnet_status = runDummyServer(e);
       break;
     case kPyTorchCPU:
-      status = runPyTorchCPU( wholeview_v, splitimg_v, splitroi_v, showerout_v, trackout_v );
+      ssnet_status = runPyTorchCPU( wholeview_v, *ssnet_input, *ssnet_roi, showerout_v, trackout_v );
       break;
     case kServer:
-      status = runSSNetServer( e.id().run(), e.id().subRun(), e.id().event(),
-			       wholeview_v, splitimg_v, splitroi_v, showerout_v, trackout_v );
+      ssnet_status = runSSNetServer( e.id().run(), e.id().subRun(), e.id().event(),
+				     wholeview_v, *ssnet_input, *ssnet_roi, showerout_v, trackout_v );
+      break;
+    case kDoNotRun:
+    default:
+      throw cet::exception("DLInterface") << "Unrecognized ssnet mode(" << _ssnet_mode << ")" << std::endl;
       break;
     }
-    if ( status!=0 )
-      throw cet::exception("DLInterface") << "Error running network" << std::endl;
-  }
+    if ( ssnet_status!=0 )
+      throw cet::exception("DLInterface") << "Error running SSNet network" << std::endl;
 
-  // merge the output
-  std::vector<larcv::Image2D> showermerged_v;
-  std::vector<larcv::Image2D> trackmerged_v;
-  mergeSSNetOutput( wholeview_v, splitroi_v, showerout_v, trackout_v, showermerged_v, trackmerged_v );
+    // merge the output
+    mergeSSNetOutput( wholeview_v, *ssnet_roi, showerout_v, trackout_v, showermerged_v, trackmerged_v );
 
-  // produce the art data product
-  saveArtProducts( e, wholeview_v, showermerged_v, trackmerged_v );
+    // produce the art data product
+    saveSSNetArtProducts( e, wholeview_v, showermerged_v, trackmerged_v );
+  }// if SSNET run
 
-  // prepare the output
+
+  // ---------
+  // LArFlow
+  // ---------
+  int larflow_status = 0;
+  std::vector<larcv::SparseImage> larflow_results_v; // larflow output for cropped images
+  std::vector<larlite::larflow3dhit> larflow_hit_v; // larflow 3d hits
+
+  if ( splitimg_v.size()>0 && _larflow_mode!=kDoNotRun ) {
+    
+    switch (_larflow_mode) {
+    case kServer:
+      larflow_status = runLArFlowServer(e.id().run(), e.id().subRun(), e.id().event(),
+					wholeview_v, splitimg_v, splitroi_v, 
+					larflow_results_v, larflow_hit_v );
+      break;
+    case kDoNotRun:
+    case kDummyServer:
+    case kTensorFlowCPU:
+    case kPyTorchCPU:
+    default:
+      throw cet::exception("DLInterface") 
+	<< "Attempting to run larflow network in unimplemented mode "
+	<< "(" << _larflow_mode << ")." << std::endl;      
+      break;
+    }
+    if ( larflow_status!= 0 ) {
+      throw cet::exception("DLInterface")
+	<< "Error running LArFlow Network" << std::endl;
+    }
+    
+    // produce the art data product
+    saveLArFlowArtProducts( e, wholeview_v, larflow_results_v, larflow_hit_v, 
+			    showermerged_v, trackmerged_v );
+    
+  } // if LARFLOW run
+
+  // -----------
+  // mask RCNN
+  // -----------
+
+  // -----------
+  // infill
+  // -----------
+
+
+  // =======================================
+  // save LArCV output
+  // ------------------
+
+
+  // wholeview and cropped output
+  // -------------------------------------
+
+  // LArCV iomanager
   larcv::IOManager& io = _supera.driver().io_mutable();
-  
   // save the wholeview images back to the supera IO
   larcv::EventImage2D* ev_imgs  = (larcv::EventImage2D*) io.get_data( larcv::kProductImage2D, "wire" );
   //std::cout << "wire eventimage2d=" << ev_imgs << std::endl;
@@ -386,7 +513,10 @@ void DLInterface::produce(art::Event & e)
     ev_splitdet->Emplace( std::move(splitimg_v) );
   }
 
-  // save detsplit output
+  // ssnet
+  // -------
+
+  // save ssnet detsplit output
   larcv::EventImage2D* ev_netout_split[2] = {nullptr,nullptr};
   if ( _save_detsplit_output ) {
     ev_netout_split[0] = (larcv::EventImage2D*) io.get_data( larcv::kProductImage2D, "netoutsplit_shower" );
@@ -394,20 +524,28 @@ void DLInterface::produce(art::Event & e)
     ev_netout_split[0]->Emplace( std::move(showerout_v) );
     ev_netout_split[1]->Emplace( std::move(trackout_v) );
   }
-
-  // save merged out
+  
+  // save ssnet merged output larcv images
   larcv::EventImage2D* ev_merged[2] = {nullptr,nullptr};
   ev_merged[0] = (larcv::EventImage2D*)io.get_data( larcv::kProductImage2D, "ssnetshower" );
   ev_merged[1] = (larcv::EventImage2D*)io.get_data( larcv::kProductImage2D, "ssnettrack" );
   ev_merged[0]->Emplace( std::move(showermerged_v) );
   ev_merged[1]->Emplace( std::move(trackmerged_v) );
+  
+  // larflow
+  // --------
+
+  // save larflow output images
+
+  // save larflow hits into larlite output
+
 
   // save entry
-  //std::cout << "saving entry" << std::endl;
+  LARCV_INFO() << "saving entry" << std::endl;
   io.save_entry();
   
   // we clear entries ourselves
-  //std::cout << "clearing entry" << std::endl;
+  LARCV_INFO() << "clearing entry" << std::endl;
   io.clear_entry();
   
 }
@@ -999,11 +1137,11 @@ void DLInterface::mergeSSNetOutput( const std::vector<larcv::Image2D>& wholeview
  *
  *
  */
-void DLInterface::saveArtProducts( art::Event& ev, 
-				   const std::vector<larcv::Image2D>& wholeimg_v,
-				   const std::vector<larcv::Image2D>& showermerged_v,
-				   const std::vector<larcv::Image2D>& trackmerged_v ) {
-
+void DLInterface::saveSSNetArtProducts( art::Event& ev, 
+					const std::vector<larcv::Image2D>& wholeimg_v,
+					const std::vector<larcv::Image2D>& showermerged_v,
+					const std::vector<larcv::Image2D>& trackmerged_v ) {
+  
   std::unique_ptr< std::vector<ubdldata::pixeldata> > ppixdata_v(new std::vector<ubdldata::pixeldata>);
 
   for ( auto const& adc : wholeimg_v ) {
@@ -1046,38 +1184,136 @@ void DLInterface::saveArtProducts( art::Event& ev,
   }
 
   
-  ev.put( std::move(ppixdata_v) );
+  ev.put( std::move(ppixdata_v), "ssnet" );
+}
+
+/**
+ * create ubdldata::pixeldata objects for art::Event
+ *
+ *
+ */
+void DLInterface::saveLArFlowArtProducts( art::Event& ev, 
+					  const std::vector<larcv::Image2D>& wholeimg_v,
+					  const std::vector<larcv::SparseImage>& larflow_results_v,
+					  std::vector<larlite::larflow3dhit>& larflow_hit_v,
+					  const std::vector<larcv::Image2D>& showermerged_v,
+					  const std::vector<larcv::Image2D>& trackmerged_v ) {
+
+  std::unique_ptr< std::vector<ubdldata::pixeldata> > ppixdata_v(new std::vector<ubdldata::pixeldata>);
+  /*
+  for ( auto const& adc : wholeimg_v ) {
+    int planeid           = (int)adc.meta().plane();
+    float pix_threshold   = _pixelthresholds_forsavedscores.at(planeid);
+    auto const& showerimg = showermerged_v.at(planeid);
+    auto const& trackimg  = trackmerged_v.at(planeid);
+
+    std::vector< std::vector<float> > pixdata_v;
+    // we reserve enough space to fill the whole image, but we shouldn't use all of the space
+    pixdata_v.reserve( adc.meta().rows()*adc.meta().cols() );
+
+    size_t npixels = 0;
+    for ( size_t r=0; r<adc.meta().rows(); r++ ) {
+      float tick = adc.meta().pos_y(r);
+      for ( size_t c=0; c<adc.meta().cols(); c++ ) {
+
+	// each pixel
+	
+	if ( adc.pixel(r,c)<pix_threshold ) continue;
+
+	float wire=adc.meta().pos_x(c);
+
+	std::vector<float> pixdata = { (float)wire, (float)tick, 
+				       (float)showerimg.pixel(r,c), (float)trackimg.pixel(r,c) };
+	
+	pixdata_v.push_back( pixdata );
+
+	npixels++;
+      }
+    }
+  
+    ubdldata::pixeldata out( pixdata_v,
+			     adc.meta().min_x(), adc.meta().min_y(), 
+			     adc.meta().max_x(), adc.meta().max_y(),
+			     (int)adc.meta().cols(), (int)adc.meta().rows(),
+			     (int)adc.meta().plane(), 4, 0 );
+			     ppixdata_v->emplace_back( std::move(out) );
+  }
+  */
+
+  
+  //ev.put( std::move(ppixdata_v), "larflowout" );
+  ev.put( std::move(ppixdata_v), "larflowhit" );
+}
+
+/**
+ * 
+ * run sparse larflow via GPU server
+ *
+ * takes the list of split images then
+ *  1. serializes them
+ *  2. sends request to broker
+ *  3. receives reply
+ *  4. checks reply
+ *  5. converts back to Image2D
+ *
+ * the client will send the request and wait (_client_timeout_secs) seconds
+ * for the response to come in. The client will try to request
+ * a max number of (_request_max_tries) times.  Upon receiving data,
+ * the client will check to see that the data is the correct one, using
+ * (run,subrun,event,iid) information. If not correct or incomplete, 
+ * request is sent again, for a total of (_request_max_tries) tries.
+ * 
+ */
+int DLInterface::runLArFlowServer( const int run, const int subrun, const int event, 
+				   const std::vector<larcv::Image2D>& wholeview_v, 
+				   std::vector<larcv::Image2D>& splitimg_v, 
+				   std::vector<larcv::ROI>& splitroi_v, 
+				   std::vector<larcv::SparseImage>& larflow_results_v,
+				   std::vector<larlite::larflow3dhit>& larflow_hit_v ) {
+  
+  bool debug  = ( _verbosity==0 ) ? true : false;
+  _larflow_server->processCroppedLArFlowViaServer( splitimg_v, 
+						   run, subrun, event, 
+						   10.0, 
+						   larflow_results_v, 
+						   debug );
+
+  larflow_hit_v = _larflow_server->croppedFlow2hits( larflow_results_v,
+						     wholeview_v,
+						     _ubcrop_trueflow_cfg,
+						     10.0,
+						     debug );
+
+  // send the message according to majortomo protocol
+  LARCV_INFO() << "RunLArFlowServer: worker returned " 
+	       << larflow_results_v.size() << " images and " 
+	       << larflow_hit_v.size() << " hits"
+	       << std::endl;
+  
+  // return ok status
+  return 0;
 }
 
 
 /**
  * 
- * overridden method: setup class before job is run
+ * initialize variables before job is run.
  *
  * 
  */
 void DLInterface::beginJob()
 {
   _supera.initialize();
+  _larflow_server = nullptr;
+  _context = nullptr;
+  _socket  = nullptr;
 
-  switch( _interface ) {
-  case kServer:
-  case kDummyServer:
+  if (_connect_to_server ) {
     openServerSocket();
-    break;
-  case kPyTorchCPU:
-#ifdef HAS_TORCH
-    loadNetwork_PyTorchCPU();
-#endif
-    break;
-  case kTensorFlowCPU:
-    break;
-  default:
-    _context = nullptr;
-    _socket  = nullptr;
-    break;
   }
-
+  
+  if ( _ssnet_mode==kPyTorchCPU )
+    loadNetwork_PyTorchCPU();
 }
 
 /**
@@ -1139,15 +1375,17 @@ void DLInterface::openServerSocket() {
   // sprintf(identity,"larbys00"); //to-do: replace with pid or some unique identifier
   // _socket->setsockopt( ZMQ_IDENTITY, identity, 8 );
 
-  if ( _interface==kDummyServer ) 
-    _socket->connect("tcp://localhost:5555");
-  else if ( _interface==kServer ) {
-    std::string broker = _broker_address+":"+_broker_port;
-    std::cout << "Connecting to Broker @ " << broker << std::endl;
-    _socket->connect( broker );
-  }
+  std::string broker = _broker_address+":"+_broker_port;
+  std::cout << "Connecting to Broker @ " << broker << std::endl;
+  _socket->connect( broker );
   
   _poller = new zmq::pollitem_t{ *_socket, 0, ZMQ_POLLIN, 0 };
+
+  // setup server interfaces
+  if ( _larflow_mode==kServer )
+    _larflow_server = new dl::LArFlow( _socket, _poller );
+  else
+    _larflow_server = nullptr;
 }
 
 /**
@@ -1159,6 +1397,10 @@ void DLInterface::openServerSocket() {
 void DLInterface::closeServerSocket() {
 
   std::cout << "DLInterface: close server socket" << std::endl;
+
+  // destroy the interfaces
+  if (_larflow_server )
+    delete _larflow_server;
 
   // close zmq socket
   if ( _socket )

@@ -1,5 +1,7 @@
 #include "LArFlow.h"
 
+#include "larflow/FlowContourMatch/FlowContourMatch.h"
+
 namespace dl {
 
   /**
@@ -15,7 +17,7 @@ namespace dl {
    */
   void LArFlow::processCroppedLArFlowViaServer( const std::vector<larcv::Image2D>& cropped_adc_v,
 						const int run, const int subrun, const int event, const float threshold,
-						std::vector<larcv::Image2D>& flowresults_v,
+						std::vector<larcv::SparseImage>& flowresults_v,
 						bool debug ) {
     
     // need to convert to larcv::SparseImage
@@ -35,20 +37,42 @@ namespace dl {
 
     std::vector< std::vector< larcv::SparseImage > > results_vv;
     
-    sendReceiveSparseImageData( "sparselarflow", 
-				cropped_sparse_v,
-				results_vv,
-				run, subrun, event, 2, debug );
+    ServerInterface::sendReceiveSparseImageData( "ublarflow_plane2", 
+						 cropped_sparse_v,
+						 results_vv,
+						 run, subrun, event, 2, debug );
     
     // convert back to image2d
     for ( auto const& sparse_v : results_vv ) {
       for ( auto const& sparse : sparse_v ) {
-	flowresults_v.push_back( sparse.as_Image2D().front() );
+	flowresults_v.emplace_back( std::move(sparse) );
       }
     }
-
+    
+    std::cout << "saving " << flowresults_v.size() << " images from sparse-larflow-server" << std::endl;
   }
 
+  /**
+   * convert larflow result into larlite hits
+   *
+   */
+  std::vector<larlite::larflow3dhit> 
+  LArFlow::croppedFlow2hits( const std::vector<larcv::SparseImage>& flowresults_v, 
+			     const std::vector<larcv::Image2D>& wholeview_v,
+			     const std::string ubcroptrueflow_cfg,
+			     const float threshold,
+			     bool debug ) {
+
+    larcv::msg::Level_t verbosity = larcv::msg::kNORMAL;
+    if ( debug )
+      verbosity = larcv::msg::kDEBUG;
+    
+    std::vector<larlite::larflow3dhit> hit_v
+      = larflow::makeFlowHitsFromSparseCrops( wholeview_v, flowresults_v,
+					      threshold, ubcroptrueflow_cfg, 
+					      verbosity );
+    return hit_v;
+  }
 
 
 }

@@ -9,6 +9,8 @@
 
 #include "larcv/core/DataFormat/Image2D.h"
 
+#include "DataFormat/larflow3dhit.h"
+
 namespace dl {
 
   class LArFlow : public ServerInterface {
@@ -23,14 +25,21 @@ namespace dl {
       {}
     
     virtual ~LArFlow() {}
-
+    
     void processCroppedLArFlowViaServer( const std::vector<larcv::Image2D>& cropped_adc_v,
 					 const int run, const int subrun, const int event, const float threshold,
-					 std::vector<larcv::Image2D>& flowresults_v, bool debug );
+					 std::vector<larcv::SparseImage>& flowresults_v, 
+					 bool debug );
+    
+    std::vector<larlite::larflow3dhit> 
+      croppedFlow2hits( const std::vector<larcv::SparseImage>& flowresults_v, 
+			const std::vector<larcv::Image2D>& wholeview_v,
+			const std::string ubcroptrueflow_cfg,
+			const float threshold,
+			bool debug );
 
-    //std::vector<larlite::larflow3dhit> croppedFlow2hits( const std::vector<larcv::Image2D>& flowresults_v );
 					  
-
+    
   protected:
 
 

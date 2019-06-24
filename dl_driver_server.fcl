@@ -6,25 +6,28 @@ BEGIN_PROLOG
 
 DLInterface: {
   module_type:         "DLInterface"
-  Verbosity:           2
+  Verbosity:           0
   WireProducerName:    "butcher"
   OutputProducerName:  "ssnet"
   PixelThresholdsForSavedScoresPerPlane: [5.0,5.0,5.0]
-  NetInterface:        "Server"
+  SSNetMode:           "Server"
+  SSNetCropMethod:     "FlashCROI"
+  LArFlowMode:         "Server"
   SuperaConfigFile:    "supera_ssnetinterface.fcl"
   PyTorchNetScript:    ["/pnfs/uboone/resilient/users/tmw/model_data/mcc8_caffe_ubssnet_plane0.pytorchscript",
                         "/pnfs/uboone/resilient/users/tmw/model_data/mcc8_caffe_ubssnet_plane1.pytorchscript",
                         "/pnfs/uboone/resilient/users/tmw/model_data/mcc8_caffe_ubssnet_plane2.pytorchscript"]
-  CroppingMethod:      "FlashCROI"
+  DoWholeImageCrop:    true
+  DoFlashROICrop:      true
   OpFlashProducerName: "simpleFlashBeam"
   SaveDetsplitImagesInput:     false
   SaveNetOutSplitImagesOutput: false
   ServerConfiguration: {
-      UseSSHtunnel: false
-      SSHAddress: ""
-      SSHUsername: "twongj01"
-      BrokerAddress: "tcp://nudot.lns.mit.edu"
-      BrokerPort: "6000"
+    BrokerAddress: "tcp://nudot.lns.mit.edu"
+    BrokerPort: "6000"
+    RequestTimeoutSecs: 300
+    RequestMaxTries: 3
+    MaxBrokerReconnects: 3
   }
 }
 

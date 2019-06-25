@@ -28,9 +28,10 @@ namespace dl {
     int nsets = cropped_adc_v.size()/3;
     for ( int iset=0; iset<nsets; iset++ ) {
       std::vector< const larcv::Image2D* > img_v;
-      for ( size_t p=0; p<3; p++ ) {
-	img_v.push_back( &cropped_adc_v.at( 3*iset+p ) );
-      }
+      img_v.push_back( &cropped_adc_v.at( 3*iset+ 2 ) ); // src-Y first
+      img_v.push_back( &cropped_adc_v.at( 3*iset+ 0 ) ); // tar1-U
+      img_v.push_back( &cropped_adc_v.at( 3*iset+ 1 ) ); // tar2-U
+      //std::cout << "SparseImage source Meta set[" << iset << "]: " << img_v.at(0)->meta().dump() << std::endl;
       larcv::SparseImage sparse( img_v, thresholds_v, require_pixel );
       cropped_sparse_v.emplace_back( std::move(sparse) );
     }
@@ -66,12 +67,75 @@ namespace dl {
     larcv::msg::Level_t verbosity = larcv::msg::kNORMAL;
     if ( debug )
       verbosity = larcv::msg::kDEBUG;
+
+    if ( debug )
+      std::cout << __FILE__ << "." << __LINE__ << ": Num of input sparse images containing flow prediction: " << flowresults_v.size() << std::endl;
+
+    // if ( flowresults_v.size()==66 ) {
+    //   // hackish -- we have to split the sparseimage up unfortunately
+    //   std::vector<larcv::SparseImage> flow_v;
+    //   for ( auto const& spimg : flowresults_v ) {
+    // 	size_t npts = spimg.pixellist().size()/4;
+    // 	std::vector<float> y2u_v( npts*3, 0 );
+    // 	std::vector<float> y2v_v( npts*3, 0 );
+    // 	for ( size_t idx=0; idx<npts; idx++ ) {
+    // 	  for (int i=0; i<2; i++ ) {
+    // 	    y2u_v[idx*3+i] = spimg.pixellist()[ idx*4+i ];
+    // 	    y2v_v[idx*3+i] = spimg.pixellist()[ idx*4+i ];
+    // 	  }
+    // 	  y2u_v[idx*3+2] = spimg.pixellist()[ idx*4+2 ];
+    // 	  y2v_v[idx*3+2] = spimg.pixellist()[ idx*4+3 ];
+    // 	}
+
+    // 	std::vector<larcv::ImageMeta> meta_y2u;
+    // 	std::vector<larcv::ImageMeta> meta_y2v;
+    // 	meta_y2u.push_back( spimg.meta(0) );
+    // 	meta_y2v.push_back( spimg.meta(1) );
+
+    // 	larcv::SparseImage y2u( 1, npts, y2u_v, meta_y2u );
+    // 	larcv::SparseImage y2v( 1, npts, y2v_v, meta_y2v );
+    // 	flow_v.emplace_back( y2u );
+    // 	flow_v.emplace_back( y2v );
+    //   }
+    //   if ( debug )
+    // 	std::cout << __FILE__ << "." << __LINE__ << ": split dual flow into sparse image sets: " << flow_v.size() << std::endl;
+
+    //   std::vector<larlite::larflow3dhit> hit_v;
+    //   try {
+    // 	hit_v = larflow::makeFlowHitsFromSparseCrops( wholeview_v, flow_v,
+    // 						      threshold, ubcroptrueflow_cfg, 
+    // 						      verbosity );
+    //   }
+    //   catch ( std::exception& e ) {
+    // 	std::cout << __FILE__ << "." << __LINE__ << ": caught exception while making flow hits\n" 
+    // 		  << "   " 
+    // 		  << e.what()
+    // 		  << std::endl;
+    // 	// pass exception along
+    // 	throw std::exception(e);
+    //   }
+    //   return hit_v;
+    // }
+    // else {
+
+    std::vector<larlite::larflow3dhit> hit_v;
+    try {
+      hit_v = larflow::makeFlowHitsFromSparseCrops( wholeview_v, flowresults_v,
+						      threshold, ubcroptrueflow_cfg, 
+						      verbosity );
+    }
+    catch ( const std::exception& e ) {
+      std::cout << __FILE__ << "." << __LINE__ << ": caught exception while making flow hits\n" 
+		<< "   " 
+		<< e.what()
+		<< std::endl;
+      // pass exception along
+      throw e;
+    }
     
-    std::vector<larlite::larflow3dhit> hit_v
-      = larflow::makeFlowHitsFromSparseCrops( wholeview_v, flowresults_v,
-					      threshold, ubcroptrueflow_cfg, 
-					      verbosity );
     return hit_v;
+    //}
+    //return std::vector<larlite::larflow3dhit>();
   }
 
 

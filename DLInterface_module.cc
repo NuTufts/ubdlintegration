@@ -23,6 +23,9 @@
 
 // larsoft
 #include "lardataobj/RecoBase/OpFlash.h"
+#include "larevt/CalibrationDBI/Interface/ChannelStatusService.h"
+#include "larevt/CalibrationDBI/Interface/ChannelStatusProvider.h"
+#include "larcore/Geometry/Geometry.h"
 
 // ubcv
 #include "ubcv/LArCVImageMaker/LArCVSuperaDriver.h"
@@ -38,12 +41,16 @@
 #include "larcv/core/Base/LArCVBaseUtilFunc.h"
 #include "larcv/core/DataFormat/EventImage2D.h"
 #include "larcv/core/DataFormat/Image2D.h"
+#include "larcv/core/DataFormat/EventSparseImage.h"
+#include "larcv/core/DataFormat/SparseImage.h"
 #include "larcv/core/DataFormat/ImageMeta.h"
 #include "larcv/core/DataFormat/ROI.h"
 #include "larcv/core/json/json_utils.h"
 
 // larlite
+#include "DataFormat/storage_manager.h"
 #include "DataFormat/opflash.h"
+#include "DataFormat/larflow3dhit.h"
 
 // ublarcvapp
 #include "ublarcvapp/UBImageMod/UBSplitDetector.h"
@@ -103,6 +110,9 @@ private:
   std::string _wire_producer_name;
   std::string _supera_config;
   int runSupera( art::Event& e, std::vector<larcv::Image2D>& wholeview_imgs );
+
+  // storage for larlite
+  larlite::storage_manager _out_larlite;
 
   // image processing/splitting/cropping
   bool _make_wholeimg_crops;
@@ -225,7 +235,7 @@ DLInterface::DLInterface(fhicl::ParameterSet const & p)
 {
   // Call appropriate produces<>() functions here.
   produces< std::vector<ubdldata::pixeldata> >( "ssnet" );
-  produces< std::vector<ubdldata::pixeldata> >( "larflowpixels" );
+  produces< std::vector<ubdldata::pixeldata> >( "larflow" );
   produces< std::vector<ubdldata::pixeldata> >( "larflowhits" );
 
   // read in parameters and configure
@@ -235,6 +245,11 @@ DLInterface::DLInterface(fhicl::ParameterSet const & p)
 
   // name of supera configuration file
   _supera_config      = p.get<std::string>("SuperaConfigFile");
+
+
+  // larlite output file
+  _out_larlite.set_io_mode( larlite::storage_manager::kWRITE );
+  _out_larlite.set_out_filename( p.get<std::string>("larliteOutputFile") );
 
   // interace to network(s)
   std::vector<string> networks_v;
@@ -303,11 +318,17 @@ DLInterface::DLInterface(fhicl::ParameterSet const & p)
   // override whole image splitter is ssnet requires it
   if ( _ssnet_crop_method==kWholeImageSplitter ) {
     _make_wholeimg_crops = true;
-    std::string splitter_cfg = p.get<std::string>("UBCropConfig","ubcrop.cfg");
-    cet::search_path split_finder("FHICL_FILE_PATH");
-    if( !split_finder.find_file(splitter_cfg,_ubcrop_trueflow_cfg) )
-      throw cet::exception("DLInterface") << "Unable to find UBSplitDet cfg in "  << split_finder.to_string() << "\n";
   }
+  std::string splitter_cfg = p.get<std::string>("UBCropConfig","ubcrop.cfg");
+  cet::search_path split_finder("FHICL_FILE_PATH");
+  if( !split_finder.find_file(splitter_cfg,_ubcrop_trueflow_cfg) )
+    throw cet::exception("DLInterface") 
+      << "Unable to find UBSplitDet config "
+      << "(" << splitter_cfg << ") -> "
+      << "(" << _ubcrop_trueflow_cfg << ") "
+      << " within paths: "  << split_finder.to_string() << "\n";
+  else
+    LARCV_DEBUG() << "UBSplitDet config path: " << _ubcrop_trueflow_cfg << std::endl;
 
   if ( _make_wholeimg_crops ) {
     _save_detsplit_input  = p.get<bool>("SaveDetsplitImagesInput",false);
@@ -344,6 +365,7 @@ DLInterface::DLInterface(fhicl::ParameterSet const & p)
 
   // configure supera (convert art::Event::CalMod -> Image2D)
   _supera.configure(supera_cfg);
+  _supera.driver().random_access(false);
 
   // configure image splitter (fullimage into detsplit image)
   _imagesplitter.configure( split_cfg );
@@ -441,9 +463,10 @@ void DLInterface::produce(art::Event & e)
     // merge the output
     mergeSSNetOutput( wholeview_v, *ssnet_roi, showerout_v, trackout_v, showermerged_v, trackmerged_v );
 
-    // produce the art data product
-    saveSSNetArtProducts( e, wholeview_v, showermerged_v, trackmerged_v );
   }// if SSNET run
+
+  // produce the art data product
+  saveSSNetArtProducts( e, wholeview_v, showermerged_v, trackmerged_v );
 
 
   // ---------
@@ -476,11 +499,13 @@ void DLInterface::produce(art::Event & e)
 	<< "Error running LArFlow Network" << std::endl;
     }
     
-    // produce the art data product
-    saveLArFlowArtProducts( e, wholeview_v, larflow_results_v, larflow_hit_v, 
-			    showermerged_v, trackmerged_v );
     
   } // if LARFLOW run
+    
+  // produce the art data product
+  saveLArFlowArtProducts( e, wholeview_v, larflow_results_v, larflow_hit_v, 
+			  showermerged_v, trackmerged_v );
+
 
   // -----------
   // mask RCNN
@@ -536,14 +561,25 @@ void DLInterface::produce(art::Event & e)
   // --------
 
   // save larflow output images
-
+  larcv::EventSparseImage* ev_larflowout 
+    = (larcv::EventSparseImage*)io.get_data( larcv::kProductSparseImage, "larflow" );
+  ev_larflowout->Move( larflow_results_v );
+  
   // save larflow hits into larlite output
+  larlite::event_larflow3dhit* ev_larflow3dhit 
+    = (larlite::event_larflow3dhit*)_out_larlite.get_data( larlite::data::kLArFlow3DHit, "flowhits" );
+  for ( auto& hit : larflow_hit_v )
+    ev_larflow3dhit->emplace_back( std::move(hit) );
+  
 
-
-  // save entry
+  // save entry: larcv
   LARCV_INFO() << "saving entry" << std::endl;
   io.save_entry();
   
+  // save entry: larlite
+  _out_larlite.set_id( e.id().run(), e.id().subRun(), e.id().event() );
+  _out_larlite.next_event();
+
   // we clear entries ourselves
   LARCV_INFO() << "clearing entry" << std::endl;
   io.clear_entry();
@@ -583,6 +619,19 @@ int DLInterface::runSupera( art::Event& e, std::vector<larcv::Image2D>& wholevie
     throw ::cet::exception("DLInterface") << "Could not locate recob::Wire data!" << std::endl;
   }
   _supera.SetDataPointer(*data_h,_wire_producer_name);
+
+  // :chstatus
+  // auto supera_chstatus = _supera.SuperaChStatusPointer();
+  // if(supera_chstatus) {
+  //   // Set database status
+  //   auto const* geom = ::lar::providerFrom<geo::Geometry>();
+  //   const lariov::ChannelStatusProvider& chanFilt = art::ServiceHandle<lariov::ChannelStatusService>()->GetProvider();
+  //   for(size_t i=0; i < geom->Nchannels(); ++i) {
+  //     auto const wid = geom->ChannelToWire(i).front();
+  //     if (!chanFilt.IsPresent(i)) supera_chstatus->set_chstatus(wid.Plane, wid.Wire, ::larcv::chstatus::kNOTPRESENT);
+  //     else supera_chstatus->set_chstatus(wid.Plane, wid.Wire, (short)(chanFilt.Status(i)));
+  //   }
+  // }  
 
   // execute supera
   bool autosave_entry = false;
@@ -1144,6 +1193,12 @@ void DLInterface::saveSSNetArtProducts( art::Event& ev,
   
   std::unique_ptr< std::vector<ubdldata::pixeldata> > ppixdata_v(new std::vector<ubdldata::pixeldata>);
 
+  if ( showermerged_v.size()==0 || trackmerged_v.size()==0 ) {
+    // fill empty
+    ev.put( std::move(ppixdata_v), "ssnet" );
+    return;
+  }
+    
   for ( auto const& adc : wholeimg_v ) {
     int planeid           = (int)adc.meta().plane();
     float pix_threshold   = _pixelthresholds_forsavedscores.at(planeid);
@@ -1182,7 +1237,6 @@ void DLInterface::saveSSNetArtProducts( art::Event& ev,
 
     ppixdata_v->emplace_back( std::move(out) );
   }
-
   
   ev.put( std::move(ppixdata_v), "ssnet" );
 }
@@ -1199,50 +1253,78 @@ void DLInterface::saveLArFlowArtProducts( art::Event& ev,
 					  const std::vector<larcv::Image2D>& showermerged_v,
 					  const std::vector<larcv::Image2D>& trackmerged_v ) {
 
-  std::unique_ptr< std::vector<ubdldata::pixeldata> > ppixdata_v(new std::vector<ubdldata::pixeldata>);
-  /*
-  for ( auto const& adc : wholeimg_v ) {
-    int planeid           = (int)adc.meta().plane();
-    float pix_threshold   = _pixelthresholds_forsavedscores.at(planeid);
-    auto const& showerimg = showermerged_v.at(planeid);
-    auto const& trackimg  = trackmerged_v.at(planeid);
+  std::unique_ptr< std::vector<ubdldata::pixeldata> > larflowpix_v(new std::vector<ubdldata::pixeldata>);
+  std::unique_ptr< std::vector<ubdldata::pixeldata> > larflowhit_v(new std::vector<ubdldata::pixeldata>);
+
+  if ( larflow_results_v.size()==0 ) {
+    // fill empty
+    ev.put( std::move(larflowpix_v), "larflow" );
+    ev.put( std::move(larflowhit_v), "larflowhits" );
+    return;
+  }
+
+  // store sparse image data
+  for ( auto const& spimg : larflow_results_v ) {
+    const larcv::ImageMeta& meta = spimg.meta(0);
+    int planeid                  = (int)meta.plane();
+    int nfeatures                = spimg.nfeatures();
 
     std::vector< std::vector<float> > pixdata_v;
-    // we reserve enough space to fill the whole image, but we shouldn't use all of the space
-    pixdata_v.reserve( adc.meta().rows()*adc.meta().cols() );
+    size_t npts = spimg.pixellist().size()/( spimg.nfeatures()+2 );
+    pixdata_v.reserve( npts );
 
-    size_t npixels = 0;
-    for ( size_t r=0; r<adc.meta().rows(); r++ ) {
-      float tick = adc.meta().pos_y(r);
-      for ( size_t c=0; c<adc.meta().cols(); c++ ) {
+    for ( size_t ipt=0; ipt<npts; ipt++ ) {
+      int idx = ipt*(nfeatures + 2);
+      float tick = meta.pos_y( spimg.pixellist()[idx]  );
+      float wire = meta.pos_x( spimg.pixellist()[idx+1] );
+      float flow = spimg.pixellist()[idx+2];
 
-	// each pixel
-	
-	if ( adc.pixel(r,c)<pix_threshold ) continue;
-
-	float wire=adc.meta().pos_x(c);
-
-	std::vector<float> pixdata = { (float)wire, (float)tick, 
-				       (float)showerimg.pixel(r,c), (float)trackimg.pixel(r,c) };
-	
-	pixdata_v.push_back( pixdata );
-
-	npixels++;
-      }
+      std::vector<float> pixdata = { (float)wire, (float)tick, (float)flow };
+      pixdata_v.push_back( pixdata );
     }
   
     ubdldata::pixeldata out( pixdata_v,
-			     adc.meta().min_x(), adc.meta().min_y(), 
-			     adc.meta().max_x(), adc.meta().max_y(),
-			     (int)adc.meta().cols(), (int)adc.meta().rows(),
-			     (int)adc.meta().plane(), 4, 0 );
-			     ppixdata_v->emplace_back( std::move(out) );
-  }
-  */
+			     meta.min_x(), meta.min_y(), 
+			     meta.max_x(), meta.max_y(),
+			     meta.cols(),  meta.rows(),
+			     (int)planeid, 3, 1 );
+    larflowpix_v->emplace_back( std::move(out) );
 
+  }
+  ev.put( std::move(larflowpix_v), "larflow" );
+
+  bool has_ssnet = (showermerged_v.size()>0) ? true : false;
+  const larcv::ImageMeta& metay = wholeimg_v.at(2).meta();
+
+  std::vector< std::vector<float> > hitdata_v;
+  hitdata_v.reserve(larflow_hit_v.size());
+
+  for ( size_t ihit=0; ihit<larflow_hit_v.size(); ihit++ ) {
+    auto& hit = larflow_hit_v[ihit];
+    
+    // incorporate ssnet
+    hit.shower_score = 0;
+    hit.track_score  = 0;
+    if ( has_ssnet ) {
+      if ( hit.tick>metay.min_y() && hit.tick<metay.max_y() 
+	   && hit.srcwire>=metay.min_x() && hit.srcwire<metay.max_x() ) {
+	hit.shower_score = showermerged_v[2].pixel( metay.row(hit.tick), metay.col(hit.srcwire) );
+	hit.track_score  = trackmerged_v[2].pixel(  metay.row(hit.tick), metay.col(hit.srcwire) );
+      }
+    }
+    
+    std::vector<float> hitdata = { (float)hit.srcwire, (float)hit.tick,
+				   hit[0], hit[1], hit[2], hit.shower_score, hit.track_score };
+    hitdata_v.emplace_back( std::move(hitdata) );
+  }
   
-  //ev.put( std::move(ppixdata_v), "larflowout" );
-  ev.put( std::move(ppixdata_v), "larflowhit" );
+  ubdldata::pixeldata hitpixout( hitdata_v,
+				 metay.min_x(), metay.min_y(), 
+				 metay.max_x(), metay.max_y(),
+				 metay.cols(),  metay.rows(),
+				 (int)2, 7, 1 );
+  larflowhit_v->emplace_back( std::move(hitpixout) );
+  ev.put( std::move(larflowhit_v), "larflowhits" );
 }
 
 /**
@@ -1304,6 +1386,7 @@ int DLInterface::runLArFlowServer( const int run, const int subrun, const int ev
 void DLInterface::beginJob()
 {
   _supera.initialize();
+  _out_larlite.open();
   _larflow_server = nullptr;
   _context = nullptr;
   _socket  = nullptr;
@@ -1327,6 +1410,7 @@ void DLInterface::endJob()
   std::cout << "DLInterface::endJob -- start" << std::endl;
   std::cout << "DLinterface::endJob -- finalize IOmanager" << std::endl;
   _supera.finalize();
+  _out_larlite.close();
   std::cout << "DLInterface::endJob -- finished" << std::endl;
 }
 

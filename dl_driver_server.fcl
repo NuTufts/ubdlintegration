@@ -6,9 +6,10 @@ BEGIN_PROLOG
 
 DLInterface: {
   module_type:         "DLInterface"
-  Verbosity:           0
+  Verbosity:           1
   WireProducerName:    "butcher"
   OutputProducerName:  "ssnet"
+  larliteOutputFile:   "larlite_larflow.root"
   PixelThresholdsForSavedScoresPerPlane: [5.0,5.0,5.0]
   SSNetMode:           "Server"
   SSNetCropMethod:     "FlashCROI"
@@ -20,6 +21,7 @@ DLInterface: {
   DoWholeImageCrop:    true
   DoFlashROICrop:      true
   OpFlashProducerName: "simpleFlashBeam"
+  UBCropConfig:        "ubcrop.cfg"
   SaveDetsplitImagesInput:     false
   SaveNetOutSplitImagesOutput: false
   ServerConfiguration: {
@@ -35,7 +37,7 @@ UBDLIntegration: @local::DLInterface
 
 END_PROLOG
 
-process_name: SSNet
+process_name: DLDeploy
 
 services:
 {

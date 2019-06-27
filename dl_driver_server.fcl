@@ -10,9 +10,9 @@ DLInterface: {
   WireProducerName:    "butcher"
   OutputProducerName:  "ssnet"
   larliteOutputFile:   "larlite_larflow.root"
-  PixelThresholdsForSavedScoresPerPlane: [5.0,5.0,5.0]
-  SSNetMode:           "DoNotRun"
-  LArFlowMode:         "DoNotRun"
+  PixelThresholdsForSavedScoresPerPlane: [10.0,10.0,10.0]
+  SSNetMode:           "Server"
+  LArFlowMode:         "Server"
   InfillMode:          "Server"
   SuperaConfigFile:    "supera_ssnetinterface.fcl"
   PyTorchNetScript:    ["/pnfs/uboone/resilient/users/tmw/model_data/mcc8_caffe_ubssnet_plane0.pytorchscript",
@@ -95,17 +95,17 @@ physics:
 {
  producers: {
    @table::dlprod_producers
-   ssnet: @local::UBDLIntegration   
+   ubdl: @local::UBDLIntegration   
  }
 
  filters: {}
 
  analyzers: {}
 
- ssnetpath: [ssnet]
+ dlnetpath: [ubdl]
  stream: [out1]
  end_paths: [stream]
- trigger_paths: [ ssnetpath ]
+ trigger_paths: [ dlnetpath ]
 }
 
 outputs:

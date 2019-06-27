@@ -25,7 +25,9 @@ namespace dl {
 						 larcv::EventChStatus& ev_chstatus,
 						 const int run, const int subrun, const int event, 
 						 std::vector<std::vector<larcv::SparseImage> >& adc_crops_vv,
+						 std::vector<std::vector<larcv::Image2D> >& label_crops_vv,
 						 std::vector<std::vector<larcv::SparseImage> >& results_vv,
+						 std::vector<larcv::Image2D>& label_v,
 						 std::vector<larcv::Image2D>& stitched_output_v,
 						 const float threshold,
 						 const std::string infill_crop_cfg,
@@ -33,34 +35,23 @@ namespace dl {
 
     // make images where dead channels are labeled
     // ---------------------------------------------
-    std::vector<larcv::Image2D> label_v;
+    debug = true;
+
+    //std::vector<larcv::Image2D> label_v;
+    std::cout << "Make label image for infill: ev_chstatus=" << &ev_chstatus << std::endl;
+    label_v.clear();
     for ( auto const& img : adc_v ) {
       larcv::Image2D label(img.meta());
       label.paint(0.0);
-      label_v.emplace_back( img );
+      label_v.emplace_back( std::move(label) );
     }    
-
-    if ( debug )
+    
+    if ( debug ) {
       std::cout << __FUNCTION__ << ":L" << __LINE__ << ":: Make Chstatus Image" << std::endl;
+    }
 
     ublarcvapp::InfillDataCropper::ChStatusToLabels(label_v,&ev_chstatus);
-
-    // std::string scfg="""Verbosity: 3
-    //     InputProducer: \"wire\"
-    //     OutputBBox2DProducer: \"detsplit\"
-    //     CropInModule: true
-    //     OutputCroppedProducer: \"detsplit\"
-    //     BBoxPixelHeight: 512
-    //     BBoxPixelWidth: 496
-    //     CoveredZWidth: 310
-    //     FillCroppedYImageCompletely: true
-    //     DebugImage: false
-    //     MaxImages: -1
-    //     MaxRandomAttempts: 4
-    //     MinFracPixelsInCrop: -0.0001
-    //     TickForward: false
-    //     """
-
+    
 
     // Define PSet. Expect parameters above
     // -------------------------------------
@@ -75,6 +66,12 @@ namespace dl {
     ubsplit.initialize();
     if ( debug )
       ubsplit.set_verbosity(larcv::msg::kDEBUG);
+
+    ublarcvapp::UBSplitDetector ubsplit_label;
+    ubsplit_label.configure(cfg);
+    ubsplit_label.initialize();
+    if ( debug )
+      ubsplit_label.set_verbosity(larcv::msg::kDEBUG);
     
     // split image and dead channel label images
     // ------------------------------------------
@@ -86,7 +83,7 @@ namespace dl {
     std::vector<larcv::Image2D> croplabel_v;
     std::vector<larcv::ROI> label_roi_v;
     if (debug) std::cout << __FUNCTION__ << ":L" << __LINE__ << ":: Run Infill splitter on ChStatus images" << std::endl;
-    ubsplit.process( label_v, croplabel_v, label_roi_v );
+    ubsplit_label.process( label_v, croplabel_v, label_roi_v );
 
     // convert crops into sparse images    
     //  --------------------------------
@@ -95,24 +92,35 @@ namespace dl {
 
     adc_crops_vv.clear();
     adc_crops_vv.resize(adc_v.size());
-    for ( size_t p=0; p<adc_v.size(); p++ )
+    label_crops_vv.clear();
+    label_crops_vv.resize(adc_v.size());
+    for ( size_t p=0; p<adc_v.size(); p++ ) {
       adc_crops_vv.at(p).reserve( nsets );
+      label_crops_vv.at(p).reserve( nsets );
+    }
     
     for ( size_t iset=0; iset<nsets; iset++ ) {
       for ( size_t p=0; p<adc_v.size(); p++ ) {
 	
-	int imgindex = iset*adc_v.size()+p;
+    	int imgindex = iset*adc_v.size()+p;
 
-	// get image2d
-	auto& adcimg   = cropadc_v.at( imgindex );
-	auto& labelimg = croplabel_v.at( imgindex );
+    	// get image2d
+    	auto& adcimg   = cropadc_v.at( imgindex );
+    	auto& labelimg = croplabel_v.at( imgindex );
 	
-	// convert into sparseimg
-	larcv::SparseImage sparse( adcimg, labelimg, threshold_v );
-	adc_crops_vv.at(p).emplace_back(std::move(sparse));
+    	// convert into sparseimg
+    	larcv::SparseImage sparse( adcimg, labelimg, threshold_v );
+    	adc_crops_vv.at(p).emplace_back(std::move(sparse));
+    	label_crops_vv.at(p).emplace_back(std::move(labelimg));
       }
     }
 
+    // run whole-view: does not work
+    // for ( size_t p=0; p<adc_v.size(); p++ ) {
+    //   larcv::SparseImage sparse_full( adc_v[p], label_v[p], threshold_v );
+    //   adc_crops_vv.at(p).emplace_back( std::move(sparse_full) );
+    //   label_crops_vv.at(p).push_back( label_v[p] );
+    // }
     
     // process sparse crops
     if (debug) std::cout << __FUNCTION__ << ":L" << __LINE__ << ":: Send images to server" << std::endl;
@@ -132,10 +140,10 @@ namespace dl {
     if (debug) std::cout << __FUNCTION__ << ":L" << __LINE__ << ":: stitch network outputs" << std::endl;
     try {
       stitchSparseCrops( results_vv,
-			 adc_v,
-			 ev_chstatus,
-			 stitched_output_v,
-			 debug );
+    			 adc_v,
+    			 ev_chstatus,
+    			 stitched_output_v,
+    			 debug );
     }
     catch ( std::exception& e ) {
       std::string ohoh = "Error processing stitchspareinfill via server: "+std::string(e.what());

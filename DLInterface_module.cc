@@ -112,7 +112,7 @@ private:
   std::string _supera_config;
   int runSupera( art::Event& e, 
 		 std::vector<larcv::Image2D>& wholeview_imgs,
-		 larcv::EventChStatus* ev_chstatus );
+		 larcv::EventChStatus** ev_chstatus );
 
   // storage for larlite
   larlite::storage_manager _out_larlite;
@@ -200,7 +200,9 @@ private:
 		       const std::vector<larcv::Image2D>& wholeview_v, 
 		       larcv::EventChStatus& ev_chstatus,
 		       std::vector<std::vector<larcv::SparseImage> >& adc_crops_vv,
+		       std::vector<std::vector<larcv::Image2D> >& label_crops_vv,
 		       std::vector<std::vector<larcv::SparseImage> >& results_vv,
+		       std::vector<larcv::Image2D>& label_v,
 		       std::vector<larcv::Image2D>& stitched_output_v,
 		       const float threshold,
 		       const std::string infill_crop_cfg );
@@ -237,6 +239,9 @@ private:
 			       const std::vector<larcv::Image2D>& showermerged_v,
 			       const std::vector<larcv::Image2D>& trackmerged_v );
 
+  void saveInfillArtProducts( art::Event& ev, 
+			      const std::vector<larcv::Image2D>& infill_stitched_v,
+			      const std::vector<larcv::Image2D>& infill_label_v );
   
 
 };
@@ -253,6 +258,7 @@ DLInterface::DLInterface(fhicl::ParameterSet const & p)
   produces< std::vector<ubdldata::pixeldata> >( "ssnet" );
   produces< std::vector<ubdldata::pixeldata> >( "larflow" );
   produces< std::vector<ubdldata::pixeldata> >( "larflowhits" );
+  produces< std::vector<ubdldata::pixeldata> >( "infill" );
 
   // read in parameters and configure
 
@@ -431,7 +437,7 @@ void DLInterface::produce(art::Event & e)
   // ----------------------------------------
   std::vector<larcv::Image2D> wholeview_v;
   larcv::EventChStatus* ev_chstatus = nullptr;
-  int nwholeview_imgs = runSupera( e, wholeview_v, ev_chstatus );
+  int nwholeview_imgs = runSupera( e, wholeview_v, &ev_chstatus );
   LARCV_INFO() << "number of wholeview images: " << nwholeview_imgs << std::endl;
 
   // ===============================================
@@ -553,7 +559,9 @@ void DLInterface::produce(art::Event & e)
   // ----------------------------------------------
   int infill_status = 0;
   std::vector< std::vector<larcv::SparseImage> > infill_crop_vv;
+  std::vector< std::vector<larcv::Image2D> >     infill_label_vv;
   std::vector< std::vector<larcv::SparseImage> > infill_netout_vv; // larflow output for cropped images
+  std::vector< larcv::Image2D > in_label_v;
   std::vector< larcv::Image2D > infill_merged_out_v;
   if ( splitimg_v.size() && _infill_mode!=kDoNotRun ) {
     switch (_infill_mode) {
@@ -561,7 +569,9 @@ void DLInterface::produce(art::Event & e)
       infill_status = runInfillServer( e.id().run(), e.id().subRun(), e.id().event(),
        				       wholeview_v, *ev_chstatus,
 				       infill_crop_vv, 
+				       infill_label_vv,
 				       infill_netout_vv,
+				       in_label_v,
 				       infill_merged_out_v,
 				       10.0,
 				       _infill_split_cfg );
@@ -582,6 +592,7 @@ void DLInterface::produce(art::Event & e)
     }    
   }
 
+  saveInfillArtProducts( e, infill_merged_out_v, in_label_v );
 
   // ================================================================
   // save LArCV output
@@ -637,8 +648,40 @@ void DLInterface::produce(art::Event & e)
     = (larlite::event_larflow3dhit*)_out_larlite.get_data( larlite::data::kLArFlow3DHit, "flowhits" );
   for ( auto& hit : larflow_hit_v )
     ev_larflow3dhit->emplace_back( std::move(hit) );
-  
 
+  // infill
+  // -------
+
+  // for debug
+  //  larcv::EventImage2D* ev_infillcropout[3]  = { nullptr, nullptr, nullptr };
+  //larcv::EventImage2D* ev_infill_labelout[3] = { nullptr, nullptr, nullptr };
+  // for ( size_t p=0; p<3; p++ ) {
+  //   char treename[64];
+  //   sprintf( treename, "infillcrop_plane%d", (int)p );
+  //   ev_infillcropout[p] = (larcv::EventImage2D*)io.get_data( larcv::kProductImage2D, treename );
+  //   if ( p<infill_netout_vv.size() ) {
+  //     for ( auto& spimg : infill_netout_vv.at(p) ) {
+  // 	ev_infillcropout[p]->Append( spimg.as_Image2D().at(0) );
+  //     }
+  //   }
+
+  //   char labeltreename[64];
+  //   sprintf( labeltreename, "labelcrop_plane%d", (int)p );
+  //   ev_infill_labelout[p] = (larcv::EventImage2D*)io.get_data( larcv::kProductImage2D, labeltreename );
+  //   if ( p<infill_label_vv.size() ) {
+  //     for ( auto& spimg : infill_label_vv.at(p) ) {
+  // 	ev_infill_labelout[p]->Append( spimg );
+  //     }
+  //   }
+
+  // }
+
+  larcv::EventImage2D* ev_infill = (larcv::EventImage2D*)io.get_data(larcv::kProductImage2D,"infill");
+  ev_infill->Emplace( std::move(infill_merged_out_v) );
+
+  larcv::EventImage2D* ev_infill_label = (larcv::EventImage2D*)io.get_data(larcv::kProductImage2D,"inlabel");
+  ev_infill_label->Emplace( std::move(in_label_v) );
+  
   // save entry: larcv
   LARCV_INFO() << "saving entry" << std::endl;
   io.save_entry();
@@ -670,7 +713,7 @@ int DLInterface::runDummyServer( art::Event& e ) {
  */
 int DLInterface::runSupera( art::Event& e, 
 			    std::vector<larcv::Image2D>& wholeview_imgs,
-			    larcv::EventChStatus* ev_chstatus ) {
+			    larcv::EventChStatus** ev_chstatus ) {
 
   //
   // set data product
@@ -713,7 +756,7 @@ int DLInterface::runSupera( art::Event& e,
 
   // get chstatus
   if ( supera_chstatus ) {
-    ev_chstatus = (larcv::EventChStatus*) _supera.driver().io_mutable().get_data( larcv::kProductChStatus, "wire" );
+    *ev_chstatus = (larcv::EventChStatus*) _supera.driver().io_mutable().get_data( larcv::kProductChStatus, "wire" );
 
     if ( _verbosity==larcv::msg::kDEBUG ) {
       LARCV_DEBUG() << "======================================" << std::endl;
@@ -722,7 +765,7 @@ int DLInterface::runSupera( art::Event& e,
       for ( size_t p=0; p<wholeview_imgs.size(); p++ ) {
 	LARCV_DEBUG() << " [plane " << p << "] --------- " << std::endl;
 	int nbad = 0;
-	auto& chstatus = ev_chstatus->Status((larcv::PlaneID_t)p);
+	auto& chstatus = (*ev_chstatus)->Status((larcv::PlaneID_t)p);
 	for (size_t w=0; w<nwires[p]; w++ ) {
 	  if ( chstatus.Status(w)!=4 ) {
 	    LARCV_DEBUG() << "  bad wire: " << w << std::endl;
@@ -1423,6 +1466,64 @@ void DLInterface::saveLArFlowArtProducts( art::Event& ev,
 }
 
 /**
+ * create ubdldata::pixeldata objects for art::Event for Infill
+ *
+ */
+void DLInterface::saveInfillArtProducts( art::Event& ev, 
+					 const std::vector<larcv::Image2D>& infill_stitched_v,
+					 const std::vector<larcv::Image2D>& infill_label_v ) {
+  
+  std::unique_ptr< std::vector<ubdldata::pixeldata> > infillpix_v(new std::vector<ubdldata::pixeldata>);
+
+  LARCV_INFO() << "saving INFILL products into art event" << std::endl;
+
+  if ( infill_stitched_v.size()==0 ) {
+    // fill empty
+    ev.put( std::move(infillpix_v), "infill" );
+    return;
+  }
+  
+  // make sparse image and save it
+  std::vector<float> infill_thresholds_v = { 10.0, 0.5 };
+  std::vector<int>   require_pixel = { 1, 1 };
+
+  for ( size_t p=0; p<infill_stitched_v.size(); p++ ) {
+    const larcv::Image2D& stitch = infill_stitched_v.at(p);
+    const larcv::Image2D& label  = infill_label_v.at(p);
+    const larcv::ImageMeta& meta = stitch.meta();
+    int nfeatures                = 2;
+    int planeid                  = meta.plane();
+    
+    std::vector<const larcv::Image2D*> pimg_v = { &stitch, &label };
+    larcv::SparseImage spimg( pimg_v, infill_thresholds_v, require_pixel );
+    
+    size_t npts = spimg.pixellist().size()/(2+nfeatures);
+    
+    std::vector< std::vector<float> > pixdata_v;
+    for ( size_t ipt=0; ipt<npts; ipt++ ) {
+      int idx = ipt*(nfeatures + 2);
+      float tick = meta.pos_y( spimg.pixellist()[idx]  );
+      float wire = meta.pos_x( spimg.pixellist()[idx+1] );
+      float fill  = spimg.pixellist()[idx+2];
+      float label = spimg.pixellist()[idx+3];
+
+      std::vector<float> pixdata = { (float)wire, tick, fill, label };
+      pixdata_v.push_back( pixdata );
+    }
+    
+    ubdldata::pixeldata out( pixdata_v,
+			     meta.min_x(), meta.min_y(), 
+			     meta.max_x(), meta.max_y(),
+			     meta.cols(),  meta.rows(),
+			     (int)planeid, 4 );
+    infillpix_v->emplace_back( std::move(out) );
+    
+  }
+  ev.put( std::move(infillpix_v), "infill" );
+  
+}
+
+/**
  * 
  * run sparse larflow via GPU server
  *
@@ -1491,7 +1592,9 @@ int DLInterface::runInfillServer( const int run, const int subrun, const int eve
 				  const std::vector<larcv::Image2D>& wholeview_v, 
 				  larcv::EventChStatus& ev_chstatus,
 				  std::vector<std::vector<larcv::SparseImage> >& adc_crops_vv,
+				  std::vector<std::vector<larcv::Image2D> >& label_crops_vv,
 				  std::vector<std::vector<larcv::SparseImage> >& results_vv,
+				  std::vector<larcv::Image2D>& label_v,
 				  std::vector<larcv::Image2D>& stitched_output_v,
 				  const float threshold,
 				  const std::string infill_crop_cfg ) {
@@ -1503,7 +1606,9 @@ int DLInterface::runInfillServer( const int run, const int subrun, const int eve
 						    ev_chstatus,
 						    run, subrun, event, 
 						    adc_crops_vv,
+						    label_crops_vv,
 						    results_vv,
+						    label_v,
 						    stitched_output_v,
 						    threshold,
 						    infill_crop_cfg,

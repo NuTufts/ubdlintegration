@@ -73,8 +73,9 @@
 
 // dlintegration modules
 #include "ServerInterface.h"
-#include "LArFlow.h"
 #include "SSNet.h"
+#include "LArFlow.h"
+#include "Infill.h"
 #endif
 
 class DLInterface;
@@ -109,7 +110,9 @@ private:
   larcv::LArCVSuperaDriver _supera;  
   std::string _wire_producer_name;
   std::string _supera_config;
-  int runSupera( art::Event& e, std::vector<larcv::Image2D>& wholeview_imgs );
+  int runSupera( art::Event& e, 
+		 std::vector<larcv::Image2D>& wholeview_imgs,
+		 larcv::EventChStatus* ev_chstatus );
 
   // storage for larlite
   larlite::storage_manager _out_larlite;
@@ -120,7 +123,8 @@ private:
   Cropper_t _ssnet_crop_method;
   ublarcvapp::UBSplitDetector _imagesplitter; //< full splitter
   ublarcvapp::ubdllee::FixedCROIFromFlashAlgo _croifromflashalgo; //< croi from flash
-  std::string _ubcrop_trueflow_cfg; //< config for the splitting and cropping algorithm
+  std::string _ubcrop_trueflow_cfg; //< config for the ssnet/larflow splitting and cropping algorithm
+  std::string _infill_split_cfg;    //< config for the infill splitting and cropping algorithm
   bool        _save_detsplit_input;
   bool        _save_detsplit_output;
   std::string _opflash_producer_name;
@@ -137,6 +141,7 @@ private:
   // the network interface to run
   NetInterface_t _ssnet_mode;
   NetInterface_t _larflow_mode;
+  NetInterface_t _infill_mode;
   bool _connect_to_server;
 
   // interface: pytorch cpu
@@ -163,6 +168,7 @@ private:
   zmq::socket_t*   _socket; 
   zmq::pollitem_t* _poller;
   dl::LArFlow*     _larflow_server;
+  dl::Infill*      _infill_server;
   
   void openServerSocket();
   void closeServerSocket();
@@ -188,6 +194,16 @@ private:
 			std::vector<larcv::ROI>& splitroi_v, 
 			std::vector<larcv::SparseImage>& larflow_results_v,
 			std::vector<larlite::larflow3dhit>& larflow_hit_v );
+
+  // interface: infill gpu server
+  int runInfillServer( const int run, const int subrun, const int event, 
+		       const std::vector<larcv::Image2D>& wholeview_v, 
+		       larcv::EventChStatus& ev_chstatus,
+		       std::vector<std::vector<larcv::SparseImage> >& adc_crops_vv,
+		       std::vector<std::vector<larcv::SparseImage> >& results_vv,
+		       std::vector<larcv::Image2D>& stitched_output_v,
+		       const float threshold,
+		       const std::string infill_crop_cfg );
 
   
   // interface: dummy server (for debug)
@@ -252,14 +268,17 @@ DLInterface::DLInterface(fhicl::ParameterSet const & p)
   _out_larlite.set_out_filename( p.get<std::string>("larliteOutputFile") );
 
   // interace to network(s)
+  size_t nnets = 3;
   std::vector<string> networks_v;
   networks_v.push_back("SSNet");
   networks_v.push_back("LArFlow");
-  NetInterface_t* mode_v[2] = { &_ssnet_mode, 
-				&_larflow_mode };
+  networks_v.push_back("Infill");
+  NetInterface_t* mode_v[3] = { &_ssnet_mode, 
+				&_larflow_mode,
+				&_infill_mode};
   
   _connect_to_server = false;
-  for ( size_t inet=0; inet<2; inet++ ) {
+  for ( size_t inet=0; inet<nnets; inet++ ) {
     std::string netname = networks_v.at(inet);
     std::string inter   = p.get<std::string>(netname+"Mode","DoNotRun");
     if ( inter=="DoNotRun" )
@@ -319,8 +338,11 @@ DLInterface::DLInterface(fhicl::ParameterSet const & p)
   if ( _ssnet_crop_method==kWholeImageSplitter ) {
     _make_wholeimg_crops = true;
   }
-  std::string splitter_cfg = p.get<std::string>("UBCropConfig","ubcrop.cfg");
+
+
+  // ubsplitter config: for larflow
   cet::search_path split_finder("FHICL_FILE_PATH");
+  std::string splitter_cfg = p.get<std::string>("UBCropConfig","ubcrop.cfg");
   if( !split_finder.find_file(splitter_cfg,_ubcrop_trueflow_cfg) )
     throw cet::exception("DLInterface") 
       << "Unable to find UBSplitDet config "
@@ -328,7 +350,19 @@ DLInterface::DLInterface(fhicl::ParameterSet const & p)
       << "(" << _ubcrop_trueflow_cfg << ") "
       << " within paths: "  << split_finder.to_string() << "\n";
   else
-    LARCV_DEBUG() << "UBSplitDet config path: " << _ubcrop_trueflow_cfg << std::endl;
+    LARCV_DEBUG() << "UBSplitDetector(ssnet/larflow) config path: " << _ubcrop_trueflow_cfg << std::endl;
+
+  // ubsplitter config: for infill
+  cet::search_path infill_split_finder("FHICL_FILE_PATH");
+  std::string infill_split_cfg = p.get<std::string>("InfillCropConfig","infill_split.cfg");
+  if( !infill_split_finder.find_file(infill_split_cfg,_infill_split_cfg) )
+    throw cet::exception("DLInterface") 
+      << "Unable to find UBSplitDet config for Infill "
+      << "(" << infill_split_cfg << ") -> "
+      << "(" << _infill_split_cfg << ") "
+      << " within paths: "  << infill_split_finder.to_string() << "\n";
+  else
+    LARCV_DEBUG() << "UBSplitDetector(infill) config path: " << _infill_split_cfg << std::endl;
 
   if ( _make_wholeimg_crops ) {
     _save_detsplit_input  = p.get<bool>("SaveDetsplitImagesInput",false);
@@ -391,10 +425,13 @@ void DLInterface::produce(art::Event & e)
 {
 
   // ===============================================
-  // get the wholeview images for the network
+  // get larcv products from supers
+  //   * wholeview images for the network
+  //   * EventChStatus
   // ----------------------------------------
   std::vector<larcv::Image2D> wholeview_v;
-  int nwholeview_imgs = runSupera( e, wholeview_v );
+  larcv::EventChStatus* ev_chstatus = nullptr;
+  int nwholeview_imgs = runSupera( e, wholeview_v, ev_chstatus );
   LARCV_INFO() << "number of wholeview images: " << nwholeview_imgs << std::endl;
 
   // ===============================================
@@ -469,9 +506,9 @@ void DLInterface::produce(art::Event & e)
   saveSSNetArtProducts( e, wholeview_v, showermerged_v, trackmerged_v );
 
 
-  // ---------
+  // -------------------------------------------------
   // LArFlow
-  // ---------
+  // -------------------------------------------------
   int larflow_status = 0;
   std::vector<larcv::SparseImage> larflow_results_v; // larflow output for cropped images
   std::vector<larlite::larflow3dhit> larflow_hit_v; // larflow 3d hits
@@ -511,14 +548,44 @@ void DLInterface::produce(art::Event & e)
   // mask RCNN
   // -----------
 
-  // -----------
+  // ----------------------------------------------
   // infill
-  // -----------
+  // ----------------------------------------------
+  int infill_status = 0;
+  std::vector< std::vector<larcv::SparseImage> > infill_crop_vv;
+  std::vector< std::vector<larcv::SparseImage> > infill_netout_vv; // larflow output for cropped images
+  std::vector< larcv::Image2D > infill_merged_out_v;
+  if ( splitimg_v.size() && _infill_mode!=kDoNotRun ) {
+    switch (_infill_mode) {
+    case kServer:
+      infill_status = runInfillServer( e.id().run(), e.id().subRun(), e.id().event(),
+       				       wholeview_v, *ev_chstatus,
+				       infill_crop_vv, 
+				       infill_netout_vv,
+				       infill_merged_out_v,
+				       10.0,
+				       _infill_split_cfg );
+      break;
+    case kDoNotRun:
+    case kDummyServer:
+    case kTensorFlowCPU:
+    case kPyTorchCPU:
+    default:
+      throw cet::exception("DLInterface") 
+	<< "Attempting to run infill network in unimplemented mode "
+	<< "(" << _infill_mode << ")." << std::endl;      
+      break;
+    }
+    if ( infill_status!= 0 ) {
+      throw cet::exception("DLInterface")
+	<< "Error running Infill Network" << std::endl;
+    }    
+  }
 
 
-  // =======================================
+  // ================================================================
   // save LArCV output
-  // ------------------
+  // ----------------------------------------------------------------
 
 
   // wholeview and cropped output
@@ -601,7 +668,9 @@ int DLInterface::runDummyServer( art::Event& e ) {
  * @return int number of images to process by network
  *
  */
-int DLInterface::runSupera( art::Event& e, std::vector<larcv::Image2D>& wholeview_imgs ) {
+int DLInterface::runSupera( art::Event& e, 
+			    std::vector<larcv::Image2D>& wholeview_imgs,
+			    larcv::EventChStatus* ev_chstatus ) {
 
   //
   // set data product
@@ -621,17 +690,17 @@ int DLInterface::runSupera( art::Event& e, std::vector<larcv::Image2D>& wholevie
   _supera.SetDataPointer(*data_h,_wire_producer_name);
 
   // :chstatus
-  // auto supera_chstatus = _supera.SuperaChStatusPointer();
-  // if(supera_chstatus) {
-  //   // Set database status
-  //   auto const* geom = ::lar::providerFrom<geo::Geometry>();
-  //   const lariov::ChannelStatusProvider& chanFilt = art::ServiceHandle<lariov::ChannelStatusService>()->GetProvider();
-  //   for(size_t i=0; i < geom->Nchannels(); ++i) {
-  //     auto const wid = geom->ChannelToWire(i).front();
-  //     if (!chanFilt.IsPresent(i)) supera_chstatus->set_chstatus(wid.Plane, wid.Wire, ::larcv::chstatus::kNOTPRESENT);
-  //     else supera_chstatus->set_chstatus(wid.Plane, wid.Wire, (short)(chanFilt.Status(i)));
-  //   }
-  // }  
+  auto supera_chstatus = _supera.SuperaChStatusPointer();
+  if(supera_chstatus) {
+    // Set database status
+    auto const* geom = ::lar::providerFrom<geo::Geometry>();
+    const lariov::ChannelStatusProvider& chanFilt = art::ServiceHandle<lariov::ChannelStatusService>()->GetProvider();
+    for(size_t i=0; i < geom->Nchannels(); ++i) {
+      auto const wid = geom->ChannelToWire(i).front();
+      if (!chanFilt.IsPresent(i)) supera_chstatus->set_chstatus(wid.Plane, wid.Wire, ::larcv::chstatus::kNOTPRESENT);
+      else supera_chstatus->set_chstatus(wid.Plane, wid.Wire, (short)(chanFilt.Status(i)));
+    }
+  }
 
   // execute supera
   bool autosave_entry = false;
@@ -641,6 +710,30 @@ int DLInterface::runSupera( art::Event& e, std::vector<larcv::Image2D>& wholevie
   // get the images
   auto ev_imgs  = (larcv::EventImage2D*) _supera.driver().io_mutable().get_data( larcv::kProductImage2D, "wire" );
   ev_imgs->Move( wholeview_imgs );
+
+  // get chstatus
+  if ( supera_chstatus ) {
+    ev_chstatus = (larcv::EventChStatus*) _supera.driver().io_mutable().get_data( larcv::kProductChStatus, "wire" );
+
+    if ( _verbosity==larcv::msg::kDEBUG ) {
+      LARCV_DEBUG() << "======================================" << std::endl;
+      LARCV_DEBUG() << " CHECK CHSTATUS INFO" << std::endl;
+      size_t nwires[3] = { 2400, 2400, 3456 };
+      for ( size_t p=0; p<wholeview_imgs.size(); p++ ) {
+	LARCV_DEBUG() << " [plane " << p << "] --------- " << std::endl;
+	int nbad = 0;
+	auto& chstatus = ev_chstatus->Status((larcv::PlaneID_t)p);
+	for (size_t w=0; w<nwires[p]; w++ ) {
+	  if ( chstatus.Status(w)!=4 ) {
+	    LARCV_DEBUG() << "  bad wire: " << w << std::endl;
+	    nbad++;
+	  }
+	}
+	LARCV_DEBUG() << " plane nbad wires: " << nbad << std::endl;
+      }
+      LARCV_DEBUG() << "======================================" << std::endl;
+    }
+  }
   
   return wholeview_imgs.size();
 }
@@ -1192,6 +1285,7 @@ void DLInterface::saveSSNetArtProducts( art::Event& ev,
 					const std::vector<larcv::Image2D>& trackmerged_v ) {
   
   std::unique_ptr< std::vector<ubdldata::pixeldata> > ppixdata_v(new std::vector<ubdldata::pixeldata>);
+  LARCV_INFO() << "saving ssnet products into art event" << std::endl;
 
   if ( showermerged_v.size()==0 || trackmerged_v.size()==0 ) {
     // fill empty
@@ -1255,6 +1349,7 @@ void DLInterface::saveLArFlowArtProducts( art::Event& ev,
 
   std::unique_ptr< std::vector<ubdldata::pixeldata> > larflowpix_v(new std::vector<ubdldata::pixeldata>);
   std::unique_ptr< std::vector<ubdldata::pixeldata> > larflowhit_v(new std::vector<ubdldata::pixeldata>);
+  LARCV_INFO() << "saving LARFLOW products into art event" << std::endl;
 
   if ( larflow_results_v.size()==0 ) {
     // fill empty
@@ -1376,6 +1471,48 @@ int DLInterface::runLArFlowServer( const int run, const int subrun, const int ev
   return 0;
 }
 
+/**
+ * 
+ * run sparse infill via GPU server through the Infill interface.
+ * 
+ * @param[in] run Run number.
+ * @param[in] subrun Subrun number.
+ * @param[in] event Event number.
+ * @param[in] wholeview_v Vector of wholeview ADC images.
+ * @param[in] ev_chstatus Event's channel status.
+ * @param[out] adc_crops_vv For each plane, the adc cropped images used in sparse form.
+ * @param[out] results_vv   For each plane, the net output used in sparse form.
+ * @param[out] stitched_output_v For each plane, the infill data stitched into whole-view ADC
+ * @param[in] threshold ADC pixel threshold used by infill machinery.
+ * @param[in] infill_crop_cfg Path to infill larcv::UBSplitDetector config. Usually different from others.
+ * @param[in] debug If true, print debug statements to stdout
+ */
+int DLInterface::runInfillServer( const int run, const int subrun, const int event, 
+				  const std::vector<larcv::Image2D>& wholeview_v, 
+				  larcv::EventChStatus& ev_chstatus,
+				  std::vector<std::vector<larcv::SparseImage> >& adc_crops_vv,
+				  std::vector<std::vector<larcv::SparseImage> >& results_vv,
+				  std::vector<larcv::Image2D>& stitched_output_v,
+				  const float threshold,
+				  const std::string infill_crop_cfg ) {
+  
+  bool debug  = ( _verbosity==0 ) ? true : false;
+  LARCV_INFO() << "Run Infill Server" << std::endl;
+
+  _infill_server->processWholeImageInfillViaServer( wholeview_v,
+						    ev_chstatus,
+						    run, subrun, event, 
+						    adc_crops_vv,
+						    results_vv,
+						    stitched_output_v,
+						    threshold,
+						    infill_crop_cfg,
+						    debug );
+
+  LARCV_INFO() << "Finished Infill Server" << std::endl;
+  // return ok status
+  return 0;
+}
 
 /**
  * 
@@ -1388,6 +1525,7 @@ void DLInterface::beginJob()
   _supera.initialize();
   _out_larlite.open();
   _larflow_server = nullptr;
+  _infill_server  = nullptr;
   _context = nullptr;
   _socket  = nullptr;
 
@@ -1470,6 +1608,11 @@ void DLInterface::openServerSocket() {
     _larflow_server = new dl::LArFlow( _socket, _poller );
   else
     _larflow_server = nullptr;
+
+  if ( _infill_mode==kServer )
+    _infill_server = new dl::Infill( _socket, _poller );
+  else
+    _infill_server = nullptr;
 }
 
 /**
@@ -1485,6 +1628,9 @@ void DLInterface::closeServerSocket() {
   // destroy the interfaces
   if (_larflow_server )
     delete _larflow_server;
+
+  if (_infill_server)
+    delete _infill_server;
 
   // close zmq socket
   if ( _socket )

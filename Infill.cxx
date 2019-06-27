@@ -39,6 +39,10 @@ namespace dl {
       label.paint(0.0);
       label_v.emplace_back( img );
     }    
+
+    if ( debug )
+      std::cout << __FUNCTION__ << ":L" << __LINE__ << ":: Make Chstatus Image" << std::endl;
+
     ublarcvapp::InfillDataCropper::ChStatusToLabels(label_v,&ev_chstatus);
 
     // std::string scfg="""Verbosity: 3
@@ -56,12 +60,16 @@ namespace dl {
     //     MinFracPixelsInCrop: -0.0001
     //     TickForward: false
     //     """
+
+
     // Define PSet. Expect parameters above
     // -------------------------------------
     larcv::PSet cfg = larcv::CreatePSetFromFile( infill_crop_cfg, "UBSplitDetector" );
 
     // create whole-image splitter
     // -----------------------------
+    if ( debug )
+      std::cout << __FUNCTION__ << ":L" << __LINE__ << ":: Configure Infill UBSplitDetector" << std::endl;
     ublarcvapp::UBSplitDetector ubsplit;
     ubsplit.configure(cfg);
     ubsplit.initialize();
@@ -72,10 +80,12 @@ namespace dl {
     // ------------------------------------------
     std::vector<larcv::Image2D> cropadc_v;
     std::vector<larcv::ROI> adc_roi_v;
+    if (debug) std::cout << __FUNCTION__ << ":L" << __LINE__ << ":: Run Infill splitter on ADC images" << std::endl;
     ubsplit.process( adc_v, cropadc_v, adc_roi_v );
     
     std::vector<larcv::Image2D> croplabel_v;
     std::vector<larcv::ROI> label_roi_v;
+    if (debug) std::cout << __FUNCTION__ << ":L" << __LINE__ << ":: Run Infill splitter on ChStatus images" << std::endl;
     ubsplit.process( label_v, croplabel_v, label_roi_v );
 
     // convert crops into sparse images    
@@ -105,17 +115,32 @@ namespace dl {
 
     
     // process sparse crops
-    processSparseCroppedInfillViaServer( adc_crops_vv, 
-					 run, subrun, event,
-					 results_vv,
-					 threshold, 
-					 debug );
+    if (debug) std::cout << __FUNCTION__ << ":L" << __LINE__ << ":: Send images to server" << std::endl;
+    try {
+      processSparseCroppedInfillViaServer( adc_crops_vv, 
+					   run, subrun, event,
+					   results_vv,
+					   threshold, 
+					   debug );
+    }
+    catch ( std::exception& e ) {
+      std::string ohoh = "Error processing sparsecroppedinfill via server: "+std::string(e.what());
+      throw std::runtime_error(ohoh);
+    }
     
     // stitch infill crops
-    stitchSparseCrops( results_vv,
-		       adc_v,
-		       ev_chstatus,
-		       stitched_output_v );
+    if (debug) std::cout << __FUNCTION__ << ":L" << __LINE__ << ":: stitch network outputs" << std::endl;
+    try {
+      stitchSparseCrops( results_vv,
+			 adc_v,
+			 ev_chstatus,
+			 stitched_output_v,
+			 debug );
+    }
+    catch ( std::exception& e ) {
+      std::string ohoh = "Error processing stitchspareinfill via server: "+std::string(e.what());
+      throw std::runtime_error(ohoh);
+    }
     
   }
 
@@ -139,11 +164,13 @@ namespace dl {
     int replies_to_input_ratio = 1;
 
     results_vv.clear();
-    results_vv.reserve(cropped_vv.size());
+    results_vv.resize(cropped_vv.size());
 
     // send data to network
     for ( size_t plane=0; plane<cropped_vv.size(); plane++ ) {
       auto const& plane_cropped_v = cropped_vv.at(plane);
+
+      results_vv.at(plane).reserve( plane_cropped_v.size() );
 
       char service_name[50];
       sprintf( service_name, "infill_plane%d", (int)plane );
@@ -161,7 +188,7 @@ namespace dl {
 						   debug );
 
       if ( debug ) 
-	std::cout << "RECEIVED " << netout_vv.size() << " replies" << std::endl;
+	std::cout << "RECEIVED " << netout_vv.size() << " replies. Plane[" << plane << "]" <<  std::endl;
 
       for ( auto& netout_v : netout_vv ) {
 	for ( auto& netout : netout_v ) {
@@ -177,7 +204,8 @@ namespace dl {
   void Infill::stitchSparseCrops( const std::vector< std::vector<larcv::SparseImage> >& netout_vv,
 				  const std::vector<larcv::Image2D>& wholeview_adc_v,
 				  larcv::EventChStatus& ev_chstatus,
-				  std::vector< larcv::Image2D >& mergedout_v ) {
+				  std::vector< larcv::Image2D >& mergedout_v,
+				  bool debug ) {
     
     // create final output image
     mergedout_v.clear();
@@ -208,6 +236,9 @@ namespace dl {
 
 	// should be 1 in this vector: the predicted in-fill ADC values
 	std::vector<larcv::Image2D> outdense = netout.as_Image2D();
+	if (debug) 
+	  std::cout << __FUNCTION__ << ":" << __LINE__ 
+		    << ":: " << outdense.at(0).meta().dump() << std::endl;
 
 	stitcher.Croploop( merge_meta,
 			   outdense.at(0), 
@@ -222,7 +253,7 @@ namespace dl {
 			   overlap_v.at(plane), 
 			   wholeview_adc_v, 
 			   ev_chstatus);
-
+      
     }//end of plane loop
 
   }

@@ -12,8 +12,8 @@ ProcessDriver: {
     StoreOnlyName: []
   }  
 
-  ProcessType:  ["SuperaMetaMaker","SuperaWire"]
-  ProcessName:  ["SuperaMetaMaker","SuperaWire"]
+  ProcessType:  ["SuperaMetaMaker","SuperaWire","SuperaChStatus"]
+  ProcessName:  ["SuperaMetaMaker","SuperaWire","SuperaChStatus"]
 
   ProcessList: {
     SuperaMetaMaker: {

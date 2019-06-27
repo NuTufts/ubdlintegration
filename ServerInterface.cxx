@@ -209,6 +209,10 @@ namespace dl {
 	    }
 	  }
 
+	  if ( debug ) 
+	    std::cout << "  ok_v[" << reid << "] got " << ok_v[reid] << "of " << expected_reply_ratio 
+		      << "  replyok=" << reply_ok[reid] 
+		      << std::endl;
 	}
 	else {
 	  std::cerr << "  Unexpected (run,subrun,event,id)" << std::endl;
@@ -219,7 +223,7 @@ namespace dl {
       // check status of replies
       is_complete = true;
       for ( size_t ii=0; ii<nimgs; ii++ ) {
-	if ( !!reply_ok[ii] ) {
+	if ( !reply_ok[ii] ) {
 	  is_complete = false;
 	  std::cerr << "  Missing reply imgid=" << ii << std::endl;
 	}

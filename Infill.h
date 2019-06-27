@@ -46,7 +46,8 @@ namespace dl {
     void stitchSparseCrops( const std::vector< std::vector<larcv::SparseImage> >& netout_vv,
 			    const std::vector<larcv::Image2D>& wholeview_adc_v,
 			    larcv::EventChStatus& ev_status,
-			    std::vector< larcv::Image2D >& mergedout_v );
+			    std::vector< larcv::Image2D >& mergedout_v,
+			    bool debug );
 					  
     
   protected:

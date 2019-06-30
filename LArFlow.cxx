@@ -38,10 +38,14 @@ namespace dl {
 
     std::vector< std::vector< larcv::SparseImage > > results_vv;
     
-    ServerInterface::sendReceiveSparseImageData( "ublarflow_plane2", 
-						 cropped_sparse_v,
-						 results_vv,
-						 run, subrun, event, 2, debug );
+    // ServerInterface::sendReceiveSparseImageData( "ublarflow_plane2", 
+    // 						 cropped_sparse_v,
+    // 						 results_vv,
+    // 						 run, subrun, event, 2, debug );
+    ServerInterface::sendReceiveData<larcv::SparseImage,larcv::SparseImage>( "ublarflow_plane2", 
+									     cropped_sparse_v,
+									     results_vv,
+									     run, subrun, event, 2, debug );
     
     // convert back to image2d
     for ( auto const& sparse_v : results_vv ) {

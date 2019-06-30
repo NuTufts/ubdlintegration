@@ -43,6 +43,8 @@
 #include "larcv/core/DataFormat/Image2D.h"
 #include "larcv/core/DataFormat/EventSparseImage.h"
 #include "larcv/core/DataFormat/SparseImage.h"
+#include "larcv/core/DataFormat/EventClusterMask.h"
+#include "larcv/core/DataFormat/ClusterMask.h"
 #include "larcv/core/DataFormat/ImageMeta.h"
 #include "larcv/core/DataFormat/ROI.h"
 #include "larcv/core/json/json_utils.h"
@@ -76,6 +78,7 @@
 #include "SSNet.h"
 #include "LArFlow.h"
 #include "Infill.h"
+#include "CosmicMRCNN.h"
 #endif
 
 class DLInterface;
@@ -142,6 +145,7 @@ private:
   NetInterface_t _ssnet_mode;
   NetInterface_t _larflow_mode;
   NetInterface_t _infill_mode;
+  NetInterface_t _cosmic_mrcnn_mode;
   bool _connect_to_server;
 
   // interface: pytorch cpu
@@ -169,6 +173,7 @@ private:
   zmq::pollitem_t* _poller;
   dl::LArFlow*     _larflow_server;
   dl::Infill*      _infill_server;
+  dl::CosmicMRCNN* _ubmrcnn_server;
   
   void openServerSocket();
   void closeServerSocket();
@@ -207,6 +212,11 @@ private:
 		       const float threshold,
 		       const std::string infill_crop_cfg );
 
+  // interface: run cosmic mrcnn server
+  int runCosmicMRCNNServer( const int run, const int subrun, const int event, 
+			    const std::vector<larcv::Image2D>& wholeview_v, 
+			    std::vector<std::vector<larcv::ClusterMask> >& results_vv );
+
   
   // interface: dummy server (for debug)
   int runDummyServer( art::Event& e );
@@ -242,6 +252,10 @@ private:
   void saveInfillArtProducts( art::Event& ev, 
 			      const std::vector<larcv::Image2D>& infill_stitched_v,
 			      const std::vector<larcv::Image2D>& infill_label_v );
+
+  void saveCosmicMRCNNArtProducts( art::Event& ev,
+				   const std::vector<larcv::Image2D>& wholeview_adc_v,
+				   const std::vector< std::vector<larcv::ClusterMask> >& ubmrcnn_result_vv );
   
 
 };
@@ -259,6 +273,7 @@ DLInterface::DLInterface(fhicl::ParameterSet const & p)
   produces< std::vector<ubdldata::pixeldata> >( "larflow" );
   produces< std::vector<ubdldata::pixeldata> >( "larflowhits" );
   produces< std::vector<ubdldata::pixeldata> >( "infill" );
+  produces< std::vector<ubdldata::pixeldata> >( "ubmrcnn" );
 
   // read in parameters and configure
 
@@ -274,14 +289,16 @@ DLInterface::DLInterface(fhicl::ParameterSet const & p)
   _out_larlite.set_out_filename( p.get<std::string>("larliteOutputFile") );
 
   // interace to network(s)
-  size_t nnets = 3;
+  size_t nnets = 4;
   std::vector<string> networks_v;
   networks_v.push_back("SSNet");
   networks_v.push_back("LArFlow");
   networks_v.push_back("Infill");
-  NetInterface_t* mode_v[3] = { &_ssnet_mode, 
+  networks_v.push_back("CosmicMRCNN");
+  NetInterface_t* mode_v[4] = { &_ssnet_mode, 
 				&_larflow_mode,
-				&_infill_mode};
+				&_infill_mode,
+				&_cosmic_mrcnn_mode};
   
   _connect_to_server = false;
   for ( size_t inet=0; inet<nnets; inet++ ) {
@@ -550,10 +567,6 @@ void DLInterface::produce(art::Event & e)
 			  showermerged_v, trackmerged_v );
 
 
-  // -----------
-  // mask RCNN
-  // -----------
-
   // ----------------------------------------------
   // infill
   // ----------------------------------------------
@@ -593,6 +606,38 @@ void DLInterface::produce(art::Event & e)
   }
 
   saveInfillArtProducts( e, infill_merged_out_v, in_label_v );
+
+  // ----------------------------------------------
+  // mask RCNN
+  // ----------------------------------------------
+  int ubmrcnn_status = 0;
+  std::vector< std::vector<larcv::ClusterMask> > ubmrcnn_result_vv(wholeview_v.size());
+  if ( wholeview_v.size() && _cosmic_mrcnn_mode!=kDoNotRun ) {
+    switch (_cosmic_mrcnn_mode) {
+    case kServer:
+      ubmrcnn_status = runCosmicMRCNNServer( e.id().run(), e.id().subRun(), e.id().event(),
+					     wholeview_v, 
+					     ubmrcnn_result_vv );
+      break;
+    case kDoNotRun:
+    case kDummyServer:
+    case kTensorFlowCPU:
+    case kPyTorchCPU:
+    default:
+      throw cet::exception("DLInterface") 
+	<< "Attempting to run Cosmic Mask RCNN network in unimplemented mode "
+	<< "(" << _cosmic_mrcnn_mode << ")." << std::endl;
+      break;
+    }
+    if ( ubmrcnn_status!= 0 ) {
+      throw cet::exception("DLInterface")
+	<< "Error running Cosmic Mask RCNN Network" << std::endl;
+    }    
+  }
+  
+  saveCosmicMRCNNArtProducts( e, wholeview_v, ubmrcnn_result_vv );
+
+
 
   // ================================================================
   // save LArCV output
@@ -681,6 +726,14 @@ void DLInterface::produce(art::Event & e)
 
   larcv::EventImage2D* ev_infill_label = (larcv::EventImage2D*)io.get_data(larcv::kProductImage2D,"inlabel");
   ev_infill_label->Emplace( std::move(in_label_v) );
+
+  // cosmic mask r-cnn
+  // ------------------
+  larcv::EventClusterMask* ev_mask_v = (larcv::EventClusterMask*)io.get_data(larcv::kProductClusterMask,"mrcnn_masks");
+  for ( size_t p=0; p<3; p++ ) {
+    if ( p<ubmrcnn_result_vv.size() )
+      ev_mask_v->emplace( std::move(ubmrcnn_result_vv.at(p)) );
+  }
   
   // save entry: larcv
   LARCV_INFO() << "saving entry" << std::endl;
@@ -1468,6 +1521,9 @@ void DLInterface::saveLArFlowArtProducts( art::Event& ev,
 /**
  * create ubdldata::pixeldata objects for art::Event for Infill
  *
+ * @param[inout] ev art Event container we will add results to
+ * @param[in] infill_stitched_v wholeview-image containing result of infill inlaid into dead regions
+ * @param[in] infill_label_v wholeview-image marking pixels on dead region
  */
 void DLInterface::saveInfillArtProducts( art::Event& ev, 
 					 const std::vector<larcv::Image2D>& infill_stitched_v,
@@ -1520,6 +1576,95 @@ void DLInterface::saveInfillArtProducts( art::Event& ev,
     
   }
   ev.put( std::move(infillpix_v), "infill" );
+  
+}
+
+/**
+ * create ubdldata::pixeldata objects for art::Event for Cosmic Mask-RCNN.
+ *
+ * @param[inout] ev art Event container we will add results to
+ * @param[in] wholeview_adc_v wholeview-image of ADC values
+ * @param[in] ubmrcnn_result_vv for each plane, a vector containing clustermask from network
+ */
+void DLInterface::saveCosmicMRCNNArtProducts( art::Event& ev, 
+					      const std::vector< larcv::Image2D >& wholeview_adc_v,
+					      const std::vector< std::vector<larcv::ClusterMask> >& ubmrcnn_result_vv ) {
+  
+  std::unique_ptr< std::vector<ubdldata::pixeldata> > ubmrcnn_pix_v(new std::vector<ubdldata::pixeldata>);
+
+  LARCV_INFO() << "saving Cosmic MRCNN products into art event" << std::endl;
+
+  if ( wholeview_adc_v.size()==0 ) {
+    // fill empty
+    ev.put( std::move(ubmrcnn_pix_v), "ubmrcnn" );
+    return;
+  }
+  
+  // store result cluster masks into ubmrcnn_pix_v
+  LARCV_INFO() << "size of results vector: " << ubmrcnn_result_vv.size() << std::endl;
+  for ( size_t p=0; p<ubmrcnn_result_vv.size(); p++ ) {
+
+    const larcv::Image2D& adc      = wholeview_adc_v.at(p);
+    const larcv::ImageMeta& meta   = adc.meta();
+    const std::vector<larcv::ClusterMask>& mask_v = ubmrcnn_result_vv[p];
+
+    int planeid = meta.plane();
+    
+    LARCV_DEBUG() << "number of clustermasks in plane[" << planeid << "]: " << mask_v.size() << std::endl;
+    
+    int imask = 0;
+    for ( auto const& mask : mask_v ) {
+
+      const std::vector<float> mask_pts = mask.as_vector_mask_no_convert();
+      size_t npts = mask_pts.size()/2;
+      LARCV_DEBUG() << "  plane[" << planeid << "] mask[" << imask << "]: npts= " << npts << std::endl;
+    
+      std::vector< std::vector<float> > pixdata_v;
+      for ( size_t ipt=0; ipt<npts; ipt++ ) {
+	int idx = ipt*2;
+
+	try {
+	  std::vector<float> pixdata = { mask_pts[idx], mask_pts[idx+1] };
+	  pixdata_v.push_back( pixdata );
+	}
+	catch( std::exception& e ) {
+	  LARCV_WARNING() << "  mask pt[" << ipt << "] error" << std::endl;
+	}
+      }//end of point loop
+    
+      std::vector<float> bbox = mask.as_vector_box_no_convert();
+      LARCV_DEBUG() << "  mask bbox (size=" << bbox.size() << "): " 
+		    << " xmin=" << bbox[0] 
+		    << " xmax=" << bbox[2]
+		    << " ymin=" << bbox[1]
+		    << " ymax=" << bbox[3]
+		    << std::endl;
+
+      // for last point, we store (interaction class, probability_of_class)
+      std::vector<float> metadata = { (float)mask.type, mask.probability_of_class };
+      LARCV_DEBUG() << "  add metadata entry: classtype=" << metadata[0] << "  classprob=" << metadata[1] << std::endl;
+      pixdata_v.push_back( metadata );
+      LARCV_DEBUG() << "  pixdata_v.size()=" << pixdata_v.size() << std::endl;
+
+      try {
+	ubdldata::pixeldata out( pixdata_v,
+				 bbox[0], bbox[1], bbox[2], bbox[3],
+				 (int)(bbox[2]-bbox[0]),  
+				 (int)(bbox[3]-bbox[1]),
+				 (int)planeid, 2, (int)mask.type );
+
+	ubmrcnn_pix_v->emplace_back( std::move(out) );
+
+	LARCV_DEBUG() << "  transer to output container[ p=" << (int)planeid << " ] " << std::endl;
+      }
+      catch (std::exception& e ) {
+	LARCV_CRITICAL() << "failed to create pixeldata object: " << e.what() << std::endl;
+	throw cet::exception("DLInterface") << " filed to create pixeldata object @ " << __FUNCTION__ << ".L" << __LINE__ << std::endl;
+      }
+      
+    }// end of mask loop
+  }//end of plane loop
+  ev.put( std::move(ubmrcnn_pix_v), "ubmrcnn" );
   
 }
 
@@ -1586,7 +1731,6 @@ int DLInterface::runLArFlowServer( const int run, const int subrun, const int ev
  * @param[out] stitched_output_v For each plane, the infill data stitched into whole-view ADC
  * @param[in] threshold ADC pixel threshold used by infill machinery.
  * @param[in] infill_crop_cfg Path to infill larcv::UBSplitDetector config. Usually different from others.
- * @param[in] debug If true, print debug statements to stdout
  */
 int DLInterface::runInfillServer( const int run, const int subrun, const int event, 
 				  const std::vector<larcv::Image2D>& wholeview_v, 
@@ -1621,6 +1765,35 @@ int DLInterface::runInfillServer( const int run, const int subrun, const int eve
 
 /**
  * 
+ * run ubmrcnn via server through the CosmicMRCNN interface.
+ * 
+ * @param[in] run Run number.
+ * @param[in] subrun Subrun number.
+ * @param[in] event Event number.
+ * @param[in] wholeview_v Vector of wholeview ADC images.
+ * @param[out] results_vv   For each plane, the net output used in sparse form.
+ * @return interger giving status. [0] is good.
+ *
+ */
+int DLInterface::runCosmicMRCNNServer( const int run, const int subrun, const int event, 
+				       const std::vector<larcv::Image2D>& wholeview_v, 
+				       std::vector<std::vector<larcv::ClusterMask> >& results_vv ) {
+  
+  bool debug  = ( _verbosity==0 ) ? true : false;
+  LARCV_INFO() << "Run UBCosmicMRCNN Server" << std::endl;
+
+  _ubmrcnn_server->processViaServer( wholeview_v,
+				     run, subrun, event, 
+				     results_vv,
+				     debug );
+  
+  LARCV_INFO() << "Run UBCosmicMRCNN Server" << std::endl;
+  // return ok status
+  return 0;
+}
+
+/**
+ * 
  * initialize variables before job is run.
  *
  * 
@@ -1631,6 +1804,7 @@ void DLInterface::beginJob()
   _out_larlite.open();
   _larflow_server = nullptr;
   _infill_server  = nullptr;
+  _ubmrcnn_server = nullptr;
   _context = nullptr;
   _socket  = nullptr;
 
@@ -1718,6 +1892,11 @@ void DLInterface::openServerSocket() {
     _infill_server = new dl::Infill( _socket, _poller );
   else
     _infill_server = nullptr;
+
+  if ( _cosmic_mrcnn_mode==kServer )
+    _ubmrcnn_server = new dl::CosmicMRCNN( _socket, _poller );
+  else
+    _ubmrcnn_server = nullptr;
 }
 
 /**
@@ -1736,6 +1915,9 @@ void DLInterface::closeServerSocket() {
 
   if (_infill_server)
     delete _infill_server;
+
+  if (_ubmrcnn_server)
+    delete _ubmrcnn_server;
 
   // close zmq socket
   if ( _socket )

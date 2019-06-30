@@ -31,12 +31,17 @@ namespace dl {
       _request_max_tries( request_max_tries )
   {}
 
+
   /**
-   * send sparse image vector and receive worker output in same format.
+   * send/receive data to server.
+   *
+   * We expect the types used to be from LArCV and have a json_util.h function
+   *  that looks like: larcv::json::as_bson( input type )
+   * 
    *
    * @param[in] service_name name of worker service
-   * @param[in] outgoing_v  vector of sparse image data to be sent to workers
-   * @param[in] incoming_vv vector of vector of sparse image data produced by workers. 
+   * @param[in] outgoing_v  vector of <class InType> data to be sent to workers
+   * @param[in] incoming_vv vector of vector of <class OutType> produced by workers. 
    *                        each inner vector contains the replies to a given image in outgoing_v.
    * @param[in] run run number of image data
    * @param[in] subrun subrun number of image data
@@ -46,11 +51,12 @@ namespace dl {
    * @return int indiciate status. [0] OK; [1] ERROR;
    * 
    */  
-  int ServerInterface::sendReceiveSparseImageData( const std::string service_name,
-						   const std::vector<larcv::SparseImage>& outgoing_v, 
-						   std::vector< std::vector<larcv::SparseImage> >& incoming_vv,
-						   const int run, const int subrun, const int event,						  
-						   int expected_reply_ratio, bool debug ) {
+  template < class InType, class OutType >  
+  int ServerInterface::sendReceiveData( const std::string service_name,
+					const std::vector<InType>& outgoing_v, 
+					std::vector< std::vector<OutType> >& incoming_vv,
+					const int run, const int subrun, const int event,						  
+					int expected_reply_ratio, bool debug ) {
     // -------------------------------------------------------------------
     // first we need to make the zmq messages
 
@@ -58,7 +64,7 @@ namespace dl {
     
     // loop over input sparseimages and convert into bson and then copy into zmq message
     for ( size_t iimg=0; iimg<outgoing_v.size(); iimg++ ) {
-      const larcv::SparseImage& spimg = outgoing_v.at(iimg);
+      auto const& spimg = outgoing_v.at(iimg);
       std::vector<std::uint8_t> bson_v = larcv::json::as_bson( spimg, run, subrun, event, (int)iimg );
       zmq::message_t an_image_msg( bson_v.size() );
       memcpy( an_image_msg.data(), bson_v.data(), bson_v.size() );
@@ -73,19 +79,17 @@ namespace dl {
 
     // send the message according to majortomo protocol
     if ( debug ) {
-      std::cout << "ServerInterface::sendReceiveSparseImageData:"
+      std::cout << "ServerInterface::sendReceiveData:"
 		<< " num images to send = " << zmsg_v.size() 
 		<< std::endl;
     }
 
     size_t nimgs = zmsg_v.size();
     
-    std::vector<bool> reply_ok;
-    if ( expected_reply_ratio>0 )
-      reply_ok.resize( nimgs, false );
+    std::vector<bool> reply_ok(nimgs,false);
     
-    std::vector<int>   ok_v( nimgs, 0 ); // track num good replies/images returned
-    bool is_complete = false;            // true, when all messages responses collected
+    std::vector<int>  ok_v( nimgs, 0 ); // track num good replies/images returned
+    bool is_complete = false;           // true, when all messages responses collected
 
     incoming_vv.clear();
     incoming_vv.resize( nimgs );
@@ -195,22 +199,23 @@ namespace dl {
 	nlohmann::json j = larcv::json::json_from_bson( bson );
 	int rrun,rsubrun,revent,reid; // returned IDs
 	larcv::json::rseid_from_json( j, rrun, rsubrun, revent, reid );
-	larcv::SparseImage img = larcv::json::sparseimg_fromjson( j );
+	std::vector<OutType> img_v;
+	larcv::json::from_json( j, img_v );
 
 	if ( rrun==run && rsubrun==subrun && revent==event && reid>=0 && reid<(int)nimgs ) {
 	  if ( debug ) 
 	    std::cout << "  reply[" << ireply << "] has expected ID numbers: "
 		      << rrun << ", " << rsubrun << ", " << revent << ", " << reid << std::endl;
-	  if ( ok_v[reid]<expected_reply_ratio ) {
-	    incoming_vv.at( reid ).emplace_back( std::move(img) );
+	  if ( ok_v[reid]<expected_reply_ratio || expected_reply_ratio==0 ) {
+	    incoming_vv.at( reid ).emplace_back( std::move(img_v[0]) );
 	    ok_v[reid] = incoming_vv[reid].size();
-	    if ( ok_v[reid]==expected_reply_ratio ) {
+	    if ( ok_v[reid]>=expected_reply_ratio ) {
 	      reply_ok[reid] = true; // marks we got all the messsages we expected
 	    }
 	  }
 
 	  if ( debug ) 
-	    std::cout << "  ok_v[" << reid << "] got " << ok_v[reid] << "of " << expected_reply_ratio 
+	    std::cout << "  ok_v[" << reid << "] got " << ok_v[reid] << " of " << expected_reply_ratio 
 		      << "  replyok=" << reply_ok[reid] 
 		      << std::endl;
 	}
@@ -309,5 +314,33 @@ namespace dl {
     
     return nsent;
   }
+
+
+  // Send/Receive Implementations
+
+  /* 
+   * sparseimage implementation for sendreceivedata.
+   *
+   * Used for SSNet, Infill, LArFlow.
+   */
+  template int ServerInterface::sendReceiveData<larcv::SparseImage,larcv::SparseImage>
+  ( const std::string service_name,
+    const std::vector< larcv::SparseImage >& outgoing_v, 
+    std::vector< std::vector< larcv::SparseImage > >& incoming_vv,
+    const int run, const int subrun, const int event,						  
+    int expected_reply_ratio, bool debug );
+
+  /**
+   * image2d to clustermask implemtnation for sendrecievedata.
+   *
+   * used for UB Mask-RCNN.
+   *
+   */
+  template int ServerInterface::sendReceiveData<larcv::Image2D,larcv::ClusterMask>
+  ( const std::string service_name,
+    const std::vector< larcv::Image2D >& outgoing_v, 
+    std::vector< std::vector< larcv::ClusterMask > >& incoming_vv,
+    const int run, const int subrun, const int event,						  
+    int expected_reply_ratio, bool debug );
 
 }

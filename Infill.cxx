@@ -188,12 +188,18 @@ namespace dl {
 		  << ": " << plane_cropped_v.size() << std::endl;
 
       std::vector< std::vector<larcv::SparseImage> > netout_vv;
-      ServerInterface::sendReceiveSparseImageData( service_name,
-						   plane_cropped_v,
-						   netout_vv,
-						   run, subrun, event,
-						   replies_to_input_ratio,
-						   debug );
+      // ServerInterface::sendReceiveSparseImageData( service_name,
+      // 						   plane_cropped_v,
+      // 						   netout_vv,
+      // 						   run, subrun, event,
+      // 						   replies_to_input_ratio,
+      // 						   debug );
+      ServerInterface::sendReceiveData<larcv::SparseImage,larcv::SparseImage>( service_name,
+									       plane_cropped_v,
+									       netout_vv,
+									       run, subrun, event,
+									       replies_to_input_ratio,
+									       debug );
 
       if ( debug ) 
 	std::cout << "RECEIVED " << netout_vv.size() << " replies. Plane[" << plane << "]" <<  std::endl;

@@ -6,7 +6,7 @@ BEGIN_PROLOG
 
 DLInterface: {
   module_type:         "DLInterface"
-  Verbosity:           0
+  Verbosity:           1
   WireProducerName:    "butcher"
   OutputProducerName:  "ssnet"
   larliteOutputFile:   "larlite_larflow.root"
@@ -14,6 +14,7 @@ DLInterface: {
   SSNetMode:           "Server"
   LArFlowMode:         "Server"
   InfillMode:          "Server"
+  CosmicMRCNNMode:     "Server"
   SuperaConfigFile:    "supera_ssnetinterface.fcl"
   PyTorchNetScript:    ["/pnfs/uboone/resilient/users/tmw/model_data/mcc8_caffe_ubssnet_plane0.pytorchscript",
                         "/pnfs/uboone/resilient/users/tmw/model_data/mcc8_caffe_ubssnet_plane1.pytorchscript",

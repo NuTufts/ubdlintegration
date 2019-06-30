@@ -24,7 +24,9 @@
 #include "zmq.hpp"
 
 // larcv
+#include "larcv/core/DataFormat/Image2D.h"
 #include "larcv/core/DataFormat/SparseImage.h"
+#include "larcv/core/DataFormat/ClusterMask.h"
 
 
 namespace dl {
@@ -39,11 +41,14 @@ namespace dl {
 
     virtual ~ServerInterface() {}
     
-    int sendReceiveSparseImageData( const std::string service_name,
-				    const std::vector<larcv::SparseImage>& outgoing_v, 
-				    std::vector< std::vector<larcv::SparseImage> >& incoming_vv,
-				    const int run, const int subrun, const int event,						  
-				    int expected_reply_ratio, bool debug );
+    // template send/receive function
+    template < class InType, class OutType >
+      int sendReceiveData( const std::string service_name,
+			   const std::vector< InType >& outgoing_v, 
+			   std::vector< std::vector< OutType > >& incoming_vv,
+			   const int run, const int subrun, const int event,						  
+			   int expected_reply_ratio, bool debug );
+
     
   protected:
 
@@ -63,7 +68,7 @@ namespace dl {
 
   };
 
-
+  
 }
 
 #endif

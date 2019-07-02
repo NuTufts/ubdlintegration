@@ -499,7 +499,8 @@ void DLInterface::produce(art::Event & e)
     = ( _ssnet_crop_method==kFlashCROI ) ? &croi_v : &splitroi_v ;
 
   if ( ssnet_input->size() && _ssnet_mode!=kDoNotRun ) {
-    
+    LARCV_INFO() << "Run SSNet" << std::endl;
+
     switch (_ssnet_mode) {
     case kDummyServer:
     case kTensorFlowCPU:
@@ -525,6 +526,11 @@ void DLInterface::produce(art::Event & e)
 
   }// if SSNET run
 
+  if ( !_save_detsplit_output ) {
+    showerout_v.clear();
+    trackout_v.clear();
+  }
+
   // produce the art data product
   saveSSNetArtProducts( e, wholeview_v, showermerged_v, trackmerged_v );
 
@@ -536,7 +542,9 @@ void DLInterface::produce(art::Event & e)
   std::vector<larcv::SparseImage> larflow_results_v; // larflow output for cropped images
   std::vector<larlite::larflow3dhit> larflow_hit_v; // larflow 3d hits
 
-  if ( splitimg_v.size()>0 && _larflow_mode!=kDoNotRun ) {
+  if ( wholeview_v.size()>0 && _larflow_mode!=kDoNotRun ) {
+
+    LARCV_INFO() << "Run LArFlow" << std::endl;
     
     switch (_larflow_mode) {
     case kServer:
@@ -566,6 +574,10 @@ void DLInterface::produce(art::Event & e)
   saveLArFlowArtProducts( e, wholeview_v, larflow_results_v, larflow_hit_v, 
 			  showermerged_v, trackmerged_v );
 
+  // clear splitimg container if we're not going to save it
+  if ( !_save_detsplit_input )
+    splitimg_v.clear();
+
 
   // ----------------------------------------------
   // infill
@@ -573,10 +585,13 @@ void DLInterface::produce(art::Event & e)
   int infill_status = 0;
   std::vector< std::vector<larcv::SparseImage> > infill_crop_vv;
   std::vector< std::vector<larcv::Image2D> >     infill_label_vv;
-  std::vector< std::vector<larcv::SparseImage> > infill_netout_vv; // larflow output for cropped images
+  std::vector< std::vector<larcv::SparseImage> > infill_netout_vv; // infill net output crop
   std::vector< larcv::Image2D > in_label_v;
   std::vector< larcv::Image2D > infill_merged_out_v;
-  if ( splitimg_v.size() && _infill_mode!=kDoNotRun ) {
+  if ( wholeview_v.size() && _infill_mode!=kDoNotRun ) {
+
+    LARCV_INFO() << "Run Infill" << std::endl;
+
     switch (_infill_mode) {
     case kServer:
       infill_status = runInfillServer( e.id().run(), e.id().subRun(), e.id().event(),
@@ -605,6 +620,11 @@ void DLInterface::produce(art::Event & e)
     }    
   }
 
+  // clear infill crops: not needed unless for debug downstream
+  infill_crop_vv.clear();
+  infill_label_vv.clear();
+  infill_netout_vv.clear();
+
   saveInfillArtProducts( e, infill_merged_out_v, in_label_v );
 
   // ----------------------------------------------
@@ -613,6 +633,9 @@ void DLInterface::produce(art::Event & e)
   int ubmrcnn_status = 0;
   std::vector< std::vector<larcv::ClusterMask> > ubmrcnn_result_vv(wholeview_v.size());
   if ( wholeview_v.size() && _cosmic_mrcnn_mode!=kDoNotRun ) {
+
+    LARCV_INFO() << "Run Cosmic Mask-Infill" << std::endl;
+
     switch (_cosmic_mrcnn_mode) {
     case kServer:
       ubmrcnn_status = runCosmicMRCNNServer( e.id().run(), e.id().subRun(), e.id().event(),

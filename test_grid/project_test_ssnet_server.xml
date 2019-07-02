@@ -3,7 +3,7 @@
 <!-- Production Project -->
 
 <!DOCTYPE project [
-<!ENTITY release      "v08_00_00_13a" >
+<!ENTITY release      "v08_00_00_15" >
 <!ENTITY file_type    "mc"        >
 <!ENTITY run_type     "physics"   >
 <!ENTITY name         "ssnet_test">
@@ -27,8 +27,8 @@
   <!-- Larsoft information -->
   <!-- Remember to make/update your larsoft tarball and point to it here -->
   <larsoft>
-    <tag>v08_05_00_06</tag>
-    <local>/pnfs/uboone/resilient/users/tmw/tar/ubcv_pytorch.tar</local>
+    <tag>v08_05_00_08</tag>
+    <local>/pnfs/uboone/resilient/users/tmw/tar/ubdlintegration_v08_00_00_15_dl_br.tar</local>
     <qual>e17:prof</qual>
   </larsoft>
 
@@ -44,8 +44,8 @@
     <outdir>&logout;/&name;_&dl_part;/out/&release;</outdir>
     <logdir>&logout;/&name;_&dl_part;/log/&release;</logdir>
     <workdir>&projectout;</workdir>
-    <numjobs>2</numjobs>
-    <maxfilesperjob>5</maxfilesperjob>
+    <numjobs>1</numjobs>
+    <maxfilesperjob>2</maxfilesperjob>
     <datatier>larlite</datatier>
     <memory>8000</memory>
     <disk>100GB</disk>

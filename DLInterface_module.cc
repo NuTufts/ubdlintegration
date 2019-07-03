@@ -92,6 +92,7 @@ public:
 
   typedef enum { kDoNotRun=0, kServer, kPyTorchCPU, kTensorFlowCPU, kDummyServer } NetInterface_t;
   typedef enum { kWholeImageSplitter=0, kFlashCROI } Cropper_t;
+  typedef enum { kSSNET=0, kLARFLOW, kINFILL, kUBMRCNN, kNUM_NETS } DLNetworks_t;
 
   // Plugins should not be copied or assigned.
   DLInterface(DLInterface const &) = delete;
@@ -169,8 +170,11 @@ private:
   int              _request_max_tries;
   int              _max_n_broker_reconnect;
   zmq::context_t*  _context;
-  zmq::socket_t*   _socket; 
-  zmq::pollitem_t* _poller;
+
+  zmq::socket_t*   _socket[4]; 
+  zmq::pollitem_t* _poller[4];
+
+
   dl::LArFlow*     _larflow_server;
   dl::Infill*      _infill_server;
   dl::CosmicMRCNN* _ubmrcnn_server;
@@ -806,12 +810,14 @@ int DLInterface::runSupera( art::Event& e,
     std::cerr<< "Attempted to load recob::Wire data: " << _wire_producer_name << std::endl;
     throw ::cet::exception("DLInterface") << "Could not locate recob::Wire data!" << std::endl;
   }
+  LARCV_INFO() << "SET WIRE DATA POINTER TO SUPERA" << std::endl;
   _supera.SetDataPointer(*data_h,_wire_producer_name);
 
   // :chstatus
   auto supera_chstatus = _supera.SuperaChStatusPointer();
   if(supera_chstatus) {
     // Set database status
+    LARCV_INFO() << "LOAD SUPERA CHSTATUS" << std::endl;
     auto const* geom = ::lar::providerFrom<geo::Geometry>();
     const lariov::ChannelStatusProvider& chanFilt = art::ServiceHandle<lariov::ChannelStatusService>()->GetProvider();
     for(size_t i=0; i < geom->Nchannels(); ++i) {
@@ -820,18 +826,23 @@ int DLInterface::runSupera( art::Event& e,
       else supera_chstatus->set_chstatus(wid.Plane, wid.Wire, (short)(chanFilt.Status(i)));
     }
   }
+  else {
+    LARCV_INFO() << "SUPERA CHSTATUS NOT LOADED" << std::endl;
+  }
 
   // execute supera
   bool autosave_entry = false;
-  //std::cout << "process event: (" << e.id().run() << "," << e.id().subRun() << "," << e.id().event() << ")" << std::endl;
+  LARCV_INFO() << "PROCESS SUPERA EVENT: (" << e.id().run() << "," << e.id().subRun() << "," << e.id().event() << ")" << std::endl;
   _supera.process(e.id().run(),e.id().subRun(),e.id().event(), autosave_entry);
 
   // get the images
+  LARCV_INFO() << "RETRIEVE ADC IMAGES: (" << e.id().run() << "," << e.id().subRun() << "," << e.id().event() << ")" << std::endl;
   auto ev_imgs  = (larcv::EventImage2D*) _supera.driver().io_mutable().get_data( larcv::kProductImage2D, "wire" );
   ev_imgs->Move( wholeview_imgs );
 
   // get chstatus
   if ( supera_chstatus ) {
+    LARCV_INFO() << "RETRIEVE EVCHSTATUS FROM SUPERA" << std::endl;
     *ev_chstatus = (larcv::EventChStatus*) _supera.driver().io_mutable().get_data( larcv::kProductChStatus, "wire" );
 
     if ( _verbosity==larcv::msg::kDEBUG ) {
@@ -1135,10 +1146,10 @@ int DLInterface::runSSNetServer( const int run, const int subrun, const int even
 
       while ( !isfinal ) {
 
-	zmq::poll( _poller, 1, _client_timeout_secs*100000 ); // last argument is in microseconds
+	zmq::poll( _poller[kSSNET], 1, _client_timeout_secs*100000 ); // last argument is in microseconds
 
 	if ( n_timeout<_max_n_broker_reconnect
-	     &&  _poller->revents & ZMQ_POLLERR ) {
+	     &&  _poller[kSSNET]->revents & ZMQ_POLLERR ) {
 	  n_timeout += 1;
 	  std::cout << "Timed out waiting for response " 
 		    << "(" << _client_timeout_secs << " secs)" << std::endl;
@@ -1151,7 +1162,7 @@ int DLInterface::runSSNetServer( const int run, const int subrun, const int even
 	  // we've failed
 	  return 1; 
 	}
-	else if ( _poller->revents & ZMQ_POLLIN ) {
+	else if ( _poller[kSSNET]->revents & ZMQ_POLLIN ) {
 
 	  // receive multi-part: keep receiving until done
 	  // expect reply with at least 4 parts: [empty] [WORKER HEADER] [PARTIAL/FINAL] [DATA ...]
@@ -1165,9 +1176,9 @@ int DLInterface::runSSNetServer( const int run, const int subrun, const int even
 
 	  while ( more==1 && nparts<100 ) {
 	    zmq::message_t reply;
-	    _socket->recv( &reply );
+	    _socket[kSSNET]->recv( &reply );
 	    size_t more_size = sizeof(more);
-	    _socket->getsockopt(ZMQ_RCVMORE,&more,&more_size);
+	    _socket[kSSNET]->getsockopt(ZMQ_RCVMORE,&more,&more_size);
 	    part_v.emplace_back( std::move(reply) );
 	    if ( debug ) std::cout << "    received msg part=" << nparts << " more=" << more << std::endl;
 	    nparts++;
@@ -1828,8 +1839,13 @@ void DLInterface::beginJob()
   _larflow_server = nullptr;
   _infill_server  = nullptr;
   _ubmrcnn_server = nullptr;
+
   _context = nullptr;
-  _socket  = nullptr;
+
+  for ( size_t i=0; i<kNUM_NETS; i++ ) {
+    _socket[i] = nullptr;
+    _poller[i] = nullptr;
+  }
 
   if (_connect_to_server ) {
     openServerSocket();
@@ -1893,33 +1909,57 @@ void DLInterface::openServerSocket() {
   
   // open the zmq socket
   _context = new zmq::context_t(1);
-  //_socket  = new zmq::socket_t( *_context, ZMQ_REQ );
-  _socket  = new zmq::socket_t( *_context, ZMQ_DEALER );
-  // char identity[10];
-  // sprintf(identity,"larbys00"); //to-do: replace with pid or some unique identifier
-  // _socket->setsockopt( ZMQ_IDENTITY, identity, 8 );
 
   std::string broker = _broker_address+":"+_broker_port;
-  std::cout << "Connecting to Broker @ " << broker << std::endl;
-  _socket->connect( broker );
-  
-  _poller = new zmq::pollitem_t{ *_socket, 0, ZMQ_POLLIN, 0 };
+  LARCV_INFO() << "Connecting to Broker @ " << broker << std::endl;
 
   // setup server interfaces
-  if ( _larflow_mode==kServer )
-    _larflow_server = new dl::LArFlow( _socket, _poller );
-  else
+  if ( _ssnet_mode==kServer ) {
+    _socket[kSSNET]  = new zmq::socket_t( *_context, ZMQ_DEALER );
+    _socket[kSSNET]->connect( broker );  
+    _poller[kSSNET] = new zmq::pollitem_t{ *_socket[kSSNET], 0, ZMQ_POLLIN, 0 };
+  }
+  else {
+    _socket[kSSNET] = nullptr;
+    _poller[kSSNET] = nullptr;
+  }
+
+  if ( _larflow_mode==kServer ) {
+    _socket[kLARFLOW]  = new zmq::socket_t( *_context, ZMQ_DEALER );
+    _socket[kLARFLOW]->connect( broker );  
+    _poller[kLARFLOW] = new zmq::pollitem_t{ *_socket[kLARFLOW], 0, ZMQ_POLLIN, 0 };    
+    _larflow_server = new dl::LArFlow( _socket[kLARFLOW], _poller[kLARFLOW] );
+  }
+  else {
+    _socket[kLARFLOW] = nullptr;
+    _poller[kLARFLOW] = nullptr;
     _larflow_server = nullptr;
+  }
 
-  if ( _infill_mode==kServer )
-    _infill_server = new dl::Infill( _socket, _poller );
-  else
+  if ( _infill_mode==kServer ) {
+    _socket[kINFILL]  = new zmq::socket_t( *_context, ZMQ_DEALER );
+    _socket[kINFILL]->connect( broker );  
+    _poller[kINFILL] = new zmq::pollitem_t{ *_socket[kINFILL], 0, ZMQ_POLLIN, 0 };
+    _infill_server = new dl::Infill( _socket[kINFILL], _poller[kINFILL] );
+  }
+  else {
+    _socket[kINFILL] = nullptr;
+    _poller[kINFILL] = nullptr;
     _infill_server = nullptr;
+  }
 
-  if ( _cosmic_mrcnn_mode==kServer )
-    _ubmrcnn_server = new dl::CosmicMRCNN( _socket, _poller );
-  else
+  if ( _cosmic_mrcnn_mode==kServer ) {
+    _socket[kUBMRCNN]  = new zmq::socket_t( *_context, ZMQ_DEALER );
+    _socket[kUBMRCNN]->connect( broker );  
+    _poller[kUBMRCNN] = new zmq::pollitem_t{ *_socket[kUBMRCNN], 0, ZMQ_POLLIN, 0 };
+    _ubmrcnn_server = new dl::CosmicMRCNN( _socket[kUBMRCNN], _poller[kUBMRCNN] );
+  }
+  else {
+    _socket[kUBMRCNN] = nullptr;
+    _poller[kUBMRCNN] = nullptr;
     _ubmrcnn_server = nullptr;
+  }
+
 }
 
 /**
@@ -1943,16 +1983,20 @@ void DLInterface::closeServerSocket() {
     delete _ubmrcnn_server;
 
   // close zmq socket
-  if ( _socket )
-    delete _socket;
+  for ( size_t i=0; i<kNUM_NETS; i++ ) {
+
+    if ( _socket[i] )
+      delete _socket[i];
+    if ( _poller[i] )
+      delete _poller[i];
+
+    _socket[i] = nullptr;
+    _poller[i] = nullptr;
+  }
+
   if ( _context )
     delete _context;
-  if ( _poller ) 
-    delete _poller;
 
-  _socket  = nullptr;
-  _context = nullptr;
-  _poller  = nullptr;
 }
 
 /**
@@ -1970,11 +2014,11 @@ void DLInterface::sendDummyMessage() {
     zmq::message_t request (5);
     memcpy (request.data (), "Hello", 5);
     std::cout << "Sending Hello " << request_nbr << "…" << std::endl;
-    _socket->send (request);
+    _socket[kSSNET]->send (request);
     
     //  Get the reply.
     zmq::message_t reply;
-    _socket->recv (&reply);
+    _socket[kSSNET]->recv (&reply);
     std::cout << "Received World " << request_nbr << std::endl;
   }
   
@@ -2001,13 +2045,13 @@ size_t DLInterface::sendSSNetPlaneImages( const int plane,
   // ------
   
   if (debug) std::cout << "  debug: send empty" << std::endl;
-  _socket->send( (char*)empty,       0, ZMQ_SNDMORE );
+  _socket[kSSNET]->send( (char*)empty,       0, ZMQ_SNDMORE );
   if (debug) std::cout << "  debug: send header" << std::endl;
-  _socket->send( header_msg.data(),  6, ZMQ_SNDMORE );
+  _socket[kSSNET]->send( header_msg.data(),  6, ZMQ_SNDMORE );
   if (debug) std::cout << "  debug: send request command" << std::endl;
-  _socket->send( (char*)&request, 1, ZMQ_SNDMORE );
+  _socket[kSSNET]->send( (char*)&request, 1, ZMQ_SNDMORE );
   if (debug) std::cout << "  debug: send service name" << std::endl;
-  _socket->send( service_name,   14, ZMQ_SNDMORE );
+  _socket[kSSNET]->send( service_name,   14, ZMQ_SNDMORE );
 
   size_t nimgs = zmsg_v.size();
   
@@ -2027,12 +2071,12 @@ size_t DLInterface::sendSSNetPlaneImages( const int plane,
 
     if (imsg!=last_index) {
       if ( debug ) std::cout << "  debug: send img[" << imsg << "]" << std::endl;
-      _socket->send( zmsg.data(), zmsg.size(), ZMQ_SNDMORE );
+      _socket[kSSNET]->send( zmsg.data(), zmsg.size(), ZMQ_SNDMORE );
       nsent++;
     }
     else {
       if ( debug ) std::cout << "  debug: send final img[" << imsg << "]" << std::endl;
-      _socket->send( zmsg.data(), zmsg.size(), 0 );
+      _socket[kSSNET]->send( zmsg.data(), zmsg.size(), 0 );
       nsent++;
     }
   }

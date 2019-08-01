@@ -79,6 +79,8 @@
 #include "LArFlow.h"
 #include "Infill.h"
 #include "CosmicMRCNN.h"
+#include "PyNet_CosmicMRCNN.h"
+
 #endif
 
 class DLInterface;
@@ -174,10 +176,13 @@ private:
   zmq::socket_t*   _socket[4]; 
   zmq::pollitem_t* _poller[4];
 
-
+  // server modules
   dl::LArFlow*     _larflow_server;
   dl::Infill*      _infill_server;
   dl::CosmicMRCNN* _ubmrcnn_server;
+
+  // python script modules
+  ubcv::ubdlintegration::PyNetCosmicMRCNN* _ubmrcnn_script;
   
   void openServerSocket();
   void closeServerSocket();
@@ -220,6 +225,9 @@ private:
   int runCosmicMRCNNServer( const int run, const int subrun, const int event, 
 			    const std::vector<larcv::Image2D>& wholeview_v, 
 			    std::vector<std::vector<larcv::ClusterMask> >& results_vv );
+  int runCosmicMRCNN_cpu( const int run, const int subrun, const int event, 
+			  const std::vector<larcv::Image2D>& wholeview_v, 
+			  std::vector<std::vector<larcv::ClusterMask> >& results_vv );
 
   
   // interface: dummy server (for debug)
@@ -638,7 +646,7 @@ void DLInterface::produce(art::Event & e)
   std::vector< std::vector<larcv::ClusterMask> > ubmrcnn_result_vv(wholeview_v.size());
   if ( wholeview_v.size() && _cosmic_mrcnn_mode!=kDoNotRun ) {
 
-    LARCV_INFO() << "Run Cosmic Mask-Infill" << std::endl;
+    LARCV_INFO() << "Run Cosmic Mask-RCNN" << std::endl;
 
     switch (_cosmic_mrcnn_mode) {
     case kServer:
@@ -646,10 +654,14 @@ void DLInterface::produce(art::Event & e)
 					     wholeview_v, 
 					     ubmrcnn_result_vv );
       break;
+    case kPyTorchCPU:
+      ubmrcnn_status = runCosmicMRCNN_cpu( e.id().run(), e.id().subRun(), e.id().event(),
+					   wholeview_v,
+					   ubmrcnn_result_vv );
+      break;
     case kDoNotRun:
     case kDummyServer:
     case kTensorFlowCPU:
-    case kPyTorchCPU:
     default:
       throw cet::exception("DLInterface") 
 	<< "Attempting to run Cosmic Mask RCNN network in unimplemented mode "
@@ -843,25 +855,33 @@ int DLInterface::runSupera( art::Event& e,
   // get chstatus
   if ( supera_chstatus ) {
     LARCV_INFO() << "RETRIEVE EVCHSTATUS FROM SUPERA" << std::endl;
-    *ev_chstatus = (larcv::EventChStatus*) _supera.driver().io_mutable().get_data( larcv::kProductChStatus, "wire" );
+    try {
+      *ev_chstatus = (larcv::EventChStatus*) _supera.driver().io_mutable().get_data( larcv::kProductChStatus, "wire" );
 
-    if ( _verbosity==larcv::msg::kDEBUG ) {
-      LARCV_DEBUG() << "======================================" << std::endl;
-      LARCV_DEBUG() << " CHECK CHSTATUS INFO" << std::endl;
-      size_t nwires[3] = { 2400, 2400, 3456 };
-      for ( size_t p=0; p<wholeview_imgs.size(); p++ ) {
-	LARCV_DEBUG() << " [plane " << p << "] --------- " << std::endl;
-	int nbad = 0;
-	auto& chstatus = (*ev_chstatus)->Status((larcv::PlaneID_t)p);
-	for (size_t w=0; w<nwires[p]; w++ ) {
-	  if ( chstatus.Status(w)!=4 ) {
-	    LARCV_DEBUG() << "  bad wire: " << w << std::endl;
-	    nbad++;
+      if ( _verbosity==larcv::msg::kDEBUG ) {
+	LARCV_DEBUG() << "======================================" << std::endl;
+	LARCV_DEBUG() << " CHECK CHSTATUS INFO" << std::endl;
+	size_t nwires[3] = { 2400, 2400, 3456 };
+	for ( size_t p=0; p<wholeview_imgs.size(); p++ ) {
+	  LARCV_DEBUG() << " [plane " << p << "] --------- " << std::endl;
+	  int nbad = 0;
+	  auto& chstatus = (*ev_chstatus)->Status((larcv::PlaneID_t)p);
+	  for (size_t w=0; w<nwires[p]; w++ ) {
+	    if ( chstatus.Status(w)!=4 ) {
+	      LARCV_DEBUG() << "  bad wire: " << w << std::endl;
+	      nbad++;
+	    }
 	  }
+	  LARCV_DEBUG() << " plane nbad wires: " << nbad << std::endl;
 	}
-	LARCV_DEBUG() << " plane nbad wires: " << nbad << std::endl;
+	LARCV_DEBUG() << "======================================" << std::endl;
       }
-      LARCV_DEBUG() << "======================================" << std::endl;
+    }
+    catch (std::exception& e ) {
+      std::stringstream errout;
+      errout << "Trouble making Ch Status object.  Might try checking that status DB is OK" << std::endl;
+      LARCV_DEBUG() << errout.str();
+      throw cet::exception(errout.str());
     }
   }
   
@@ -1828,6 +1848,36 @@ int DLInterface::runCosmicMRCNNServer( const int run, const int subrun, const in
 
 /**
  * 
+ * run ubmrcnn via server through the CosmicMRCNN interface.
+ * 
+ * @param[in] run Run number.
+ * @param[in] subrun Subrun number.
+ * @param[in] event Event number.
+ * @param[in] wholeview_v Vector of wholeview ADC images.
+ * @param[out] results_vv   For each plane, the net output used in sparse form.
+ * @return interger giving status. [0] is good.
+ *
+ */
+int DLInterface::runCosmicMRCNN_cpu( const int run, const int subrun, const int event, 
+				     const std::vector<larcv::Image2D>& wholeview_v, 
+				     std::vector<std::vector<larcv::ClusterMask> >& results_vv ) {
+
+  std::vector< std::vector< larcv::ClusterMask> > masks_vv;
+  _ubmrcnn_script->run_cosmic_mrcnn( wholeview_v,
+				     run, subrun, event,
+				     10.0, masks_vv );
+
+  for ( size_t p=0; p<3; p++ ) {
+    for ( auto& mask : masks_vv.at(p) ) {
+      results_vv.at(p).emplace_back( mask );
+    }
+  }
+  
+  return 0;
+}
+
+/**
+ * 
  * initialize variables before job is run.
  *
  * 
@@ -1853,6 +1903,14 @@ void DLInterface::beginJob()
   
   if ( _ssnet_mode==kPyTorchCPU )
     loadNetwork_PyTorchCPU();
+
+
+  // script ubmrcnn
+  _ubmrcnn_script = nullptr;
+  if ( _cosmic_mrcnn_mode==kPyTorchCPU ) {
+    _ubmrcnn_script = new ubcv::ubdlintegration::PyNetCosmicMRCNN();
+  }
+
 }
 
 /**
@@ -1868,6 +1926,9 @@ void DLInterface::endJob()
   _supera.finalize();
   _out_larlite.close();
   std::cout << "DLInterface::endJob -- finished" << std::endl;
+
+  if ( _ubmrcnn_script )
+    delete _ubmrcnn_script;
 }
 
 /**
@@ -1928,7 +1989,7 @@ void DLInterface::openServerSocket() {
     _socket[kLARFLOW]  = new zmq::socket_t( *_context, ZMQ_DEALER );
     _socket[kLARFLOW]->connect( broker );  
     _poller[kLARFLOW] = new zmq::pollitem_t{ *_socket[kLARFLOW], 0, ZMQ_POLLIN, 0 };    
-    _larflow_server = new dl::LArFlow( _socket[kLARFLOW], _poller[kLARFLOW] );
+    _larflow_server = new dl::LArFlow( _socket[kLARFLOW], _poller[kLARFLOW], dl::LArFlow::kDENSE );
   }
   else {
     _socket[kLARFLOW] = nullptr;

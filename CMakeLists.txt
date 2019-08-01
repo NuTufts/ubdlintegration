@@ -6,7 +6,7 @@ include_directories ( $ENV{LARLITE_COREDIR} ${LARCV_INCLUDE_DIR} $ENV{UBLARCVAPP
 # FOR DEBUG
 #message("python ${PYTHON_INCLUDE_DIRS}")
 #message("python ${PYTHON_LIBRARIES}")
-#message("opencv: ${OpenCV_LIBS}")
+message("opencv: ${OpenCV_INCLUDE_DIRS}")
 #message("ZMQ lib: ${ZeroMQ_LIBRARY}")
 #message("ublarcvapp LIBS: ${ublarcvapp_LIBRARIES}")
 #message("LARFLOW LIBS: ${larflow_LIBRARIES}")
@@ -15,12 +15,13 @@ include_directories ( $ENV{LARLITE_COREDIR} ${LARCV_INCLUDE_DIR} $ENV{UBLARCVAPP
 set(CMAKE_CXX_STANDARD 17)
 if (Torch_FOUND)
   include_directories ( ${TORCH_INCLUDE_DIRS} )
-  link_libraries( ${LIB_NAME} -L$ENV{BOOST_LIB} -lboost_system ${ROOTLIB} ${LARLITE_LIB} ${ublarcvapp_LIBRARIES} ${larflow_LIBRARIES} ${TORCH_LIBRARIES} opencv_core opencv_imgproc ${PYTHON_LIBRARIES} ) 
+  link_libraries( ${LIB_NAME} -L$ENV{BOOST_LIB} -lboost_system ${ROOTLIB} ${LARLITE_LIB} ${ublarcvapp_LIBRARIES} ${larflow_LIBRARIES} ${TORCH_LIBRARIES} ${PYTHON_LIBRARIES} ) 
   set(CMAKE_CXX_FLAGS  "${CMAKE_CXX_FLAGS} -DHAS_TORCH")
 else()
-  link_libraries( ${LIB_NAME} -L$ENV{BOOST_LIB} -lboost_system ${ROOTLIB} ${LARLITE_LIB} ${ublarcvapp_LIBRARIES} ${larflow_LIBRARIES} opencv_core opencv_imgproc $PYTHON_LIBRARIES) 
+  link_libraries( ${LIB_NAME} -L$ENV{BOOST_LIB} -lboost_system ${ROOTLIB} ${LARLITE_LIB} ${ublarcvapp_LIBRARIES} ${larflow_LIBRARIES} ${PYTHON_LIBRARIES}) 
 endif()
 add_definitions("-Wno-register")
+add_definitions("-DHASPYUTIL")
 
 art_make( BASENAME_ONLY
 	  LIBRARY_NAME     ubcv_ubdlintegration
@@ -58,6 +59,7 @@ art_make( BASENAME_ONLY
 		   LArCVCoreDataFormat
 		   LArCVCoreProcessor
 		   LArCVCoreJSON
+		   LArCVCorePyUtil
 		   ${ROOT_GEOM}
 		   ${ROOT_XMLIO}
 		   ${ROOT_GDML}

@@ -106,8 +106,9 @@ namespace dl {
       std::vector< zmq::message_t > zreply_v; // reply container
 
       while ( !isfinal ) {
-
-	zmq::poll( _poller, 1, _client_timeout_secs*100000 ); // last argument is in microseconds
+	
+	if ( debug ) std::cout << "ServerInterface:: Start Poll" << std::endl;
+	zmq::poll( _poller, 1, _client_timeout_secs*1000 ); // last argument is in microseconds
 
 	if ( n_timeout<_max_n_broker_reconnect
 	     &&  _poller->revents & ZMQ_POLLERR ) {
@@ -124,6 +125,7 @@ namespace dl {
 	  return 1; 
 	}
 	else if ( _poller->revents & ZMQ_POLLIN ) {
+	  if ( debug ) std::cout << "ServerInterface:: Poll-in detected." << std::endl;
 
 	  // receive multi-part: keep receiving until done
 	  // expect reply with at least 4 parts: [empty] [WORKER HEADER] [PARTIAL/FINAL] [DATA ...]
@@ -141,6 +143,7 @@ namespace dl {
 	    size_t more_size = sizeof(more);
 	    _broker->getsockopt(ZMQ_RCVMORE,&more,&more_size);
 	    part_v.emplace_back( std::move(reply) );
+	    
 	    if ( debug ) std::cout << "    received msg part=" << nparts << " more=" << more << std::endl;
 	    nparts++;
 	  }
@@ -149,18 +152,23 @@ namespace dl {
 		      << "  Expect >= 4 parts."
 		      << std::endl;
 	  }
+	  if ( part_v.size()<4 ) {
+	    std::cout << "ERROR in packet. retry receive." << std::endl;
+	    isfinal = false; // should restart recv poll
+	    continue;
+	  }
 
 	  // parse
 	  bool ok = true;
 	  if ( part_v.at(0).size()!=0 ) {
 	    ok = false;
-	    std::cerr << "  first msg not empy!" << std::endl;
+	    std::cerr << "  first msg not empty!" << std::endl;
 	  }
 	  std::string reply_header = (char*)part_v.at(1).data();
 	  //std::cout << "  reply header: " << reply_header << std::endl;
 	  if ( ok && reply_header!="MDPC02" ) {
 	    ok = false;
-	    std::cerr << "  wrong header." << std::endl;
+	    std::cerr << "  wrong header. msgpart[1]=" << reply_header << std::endl;
 	  }
 	  if ( ok ) {
 	    //std::cout << "  [partial/final] = " << (char*)part_v.at(2).data() << std::endl;

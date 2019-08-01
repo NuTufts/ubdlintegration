@@ -17,11 +17,15 @@ namespace dl {
 
   public:
 
+    typedef enum { kDENSE, kSPARSE } NetType_t;
+
   LArFlow( zmq::socket_t* broker_socket, zmq::pollitem_t* poller,
+	   LArFlow::NetType_t net,
 	   int client_timeout_secs=300, int max_n_broker_reconnect=3, 
 	   int n_max_parts=100, int request_max_tries=3 )
     : ServerInterface( broker_socket, poller, client_timeout_secs,
-		       max_n_broker_reconnect, n_max_parts, request_max_tries )
+		       max_n_broker_reconnect, n_max_parts, request_max_tries ),
+      _net_type(net)
       {}
     
     virtual ~LArFlow() {}
@@ -42,7 +46,7 @@ namespace dl {
     
   protected:
 
-
+    NetType_t _net_type;
 
   };
 

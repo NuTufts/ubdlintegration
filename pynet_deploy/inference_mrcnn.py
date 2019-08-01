@@ -9,24 +9,32 @@ from larcv import larcv
 from ctypes import c_int
 larcv.json.load_jsonutils()
 
-
-# mask rcnn: need mask-rcnn.pytorch/lib in PYTHONPATH
-from core.config import cfg, cfg_from_file, cfg_from_list, assert_and_infer_cfg
-from core.test import im_detect_all
-import utils.net as net_utils
-import nn as maskrcnn_nn
-from modeling.model_builder import Generalized_RCNN
-
 def forwardpass( dense_img_bson, weights_filepath, cfg_filepath ):
 
+    # mask rcnn: need mask-rcnn.pytorch/lib in PYTHONPATH
+    from utils.collections import AttrDict
+    from core.config import make_default_config
+    import core.config
+
+    core.config.__C = make_default_config()
+    core.config.cfg = core.config.__C
+
+    from core.config import cfg, cfg_from_file, cfg_from_list, assert_and_infer_cfg
+
+    cfg_from_file( cfg_filepath )
     cfg.TRAIN.DATASETS = ('particle_physics_train')
     cfg.MODEL.NUM_CLASSES = 7
-    cfg_from_file( cfg_filepath )
     cfg.MODEL.LOAD_IMAGENET_PRETRAINED_WEIGHTS = False  # Don't need to load imagenet pretrained weights
     cfg.MODEL.DEVICE = "cpu"
+
+    from core.test import im_detect_all
+    import utils.net as net_utils
+    import nn as maskrcnn_nn
+    from modeling.model_builder import Generalized_RCNN
+
     assert_and_infer_cfg()
     model = Generalized_RCNN()
-        
+
     locations = {}
     for x in range(10):
         locations["cuda:%d"%(x)] = "cpu"
@@ -115,7 +123,7 @@ def forwardpass( dense_img_bson, weights_filepath, cfg_filepath ):
         cluster_mask_json_v.append(bson)
 
 
-    
+    del cfg
     return cluster_mask_json_v
 
 
@@ -143,7 +151,8 @@ if __name__ == "__main__":
         img_v  = ev_img.Image2DArray()
         img_np_v = [ larcv.as_ndarray(img_v.at(p)) for p in range(3) ]
         
-        for p in [2]:
+        for p in [0,1,2]:
+            print("plane {}".format(p))
             bson = larcv.json.as_pybytes( img_v.at(p),
                                           io.event_id().run(),
                                           io.event_id().subrun(),

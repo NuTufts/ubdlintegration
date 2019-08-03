@@ -13,7 +13,7 @@
 
 #include <vector>
 #include "larcv/core/DataFormat/Image2D.h"
-#include "larcv/core/DataFormat/ClusterMask.h"
+#include "larcv/core/DataFormat/SparseImage.h"
 
 namespace ubcv {
 namespace ubdlintegration {
@@ -27,7 +27,6 @@ namespace ubdlintegration {
     int run_sparse_cropped_infill( const std::vector< std::vector<larcv::SparseImage> >& cropped_vv, 
 				   const int run, const int subrun, const int event,
 				   std::vector<std::vector<larcv::SparseImage> >& results_vv,
-				   const float threshold,
 				   bool debug );
 
   protected:

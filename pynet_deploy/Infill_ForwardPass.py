@@ -23,23 +23,26 @@ import torch
 # sparse model
 from sparseinfill import SparseInfill
 
-def forwardpass( sparseimg_bson_list, checkpoint_file, batchsize ):
+def forwardpass( sparseimg_bson_list, checkpoint_file ):
     """ function to load the sparse infill network and run a forward pass of one image
     make tensor for coords (row,col,batch). expects an input consisting of a list of pybyte 
     objects containing json versions of SparseImage """
-    #print "forward pass"
+    print("[INFILL] forward pass")
 
+    batchsize = 1
     starttime = time.time()
 
     # load the model
+    print("[INFILL] define sparse model")
     model = SparseInfill( (512,496), 1,16,16,5, show_sizes=False)
 
     # load checkpoint data
+    print("[INFILL] load checkpoint file {}".format(checkpoint_file))
     checkpoint = torch.load( checkpoint_file, {"cuda:0":"cpu","cuda:1":"cpu"} )
     best_prec1 = checkpoint["best_prec1"]
     model.load_state_dict(checkpoint["state_dict"])
     loadedmodeltime = time.time()-starttime
-    print("model loading time: %.2f secs"%(loadedmodeltime))
+    print("[INFILL] model loading time: %.2f secs"%(loadedmodeltime))
     
     # parse the input data, loop over pybyte objects
     sparsedata_v = []

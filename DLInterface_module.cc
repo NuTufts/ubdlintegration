@@ -58,6 +58,8 @@
 #include "ublarcvapp/UBImageMod/UBSplitDetector.h"
 #include "ublarcvapp/ubdllee/FixedCROIFromFlashAlgo.h"
 #include "ublarcvapp/ubdllee/FixedCROIFromFlashConfig.h"
+#include "ublarcvapp/UBImageMod/InfillDataCropper.h"
+#include "ublarcvapp/UBImageMod/InfillImageStitcher.h"
 
 // ROOT
 #include "TMessage.h"
@@ -80,7 +82,7 @@
 #include "Infill.h"            // server interface for infill
 #include "CosmicMRCNN.h"       // server interface for cosmic mask-rcnn
 #include "PyNet_CosmicMRCNN.h" // cpu python interface for cosmic mask-rcnn
-#include "PyNet_Infill.h"      // cpu python interface for infill
+#include "PyNet_SparseInfill.h"      // cpu python interface for infill
 
 #endif
 
@@ -220,10 +222,11 @@ private:
 		       std::vector<std::vector<larcv::SparseImage> >& adc_crops_vv,
 		       std::vector<std::vector<larcv::SparseImage> >& results_vv,
 		       const float threshold );
+  // interface: infill cpu
   int runInfill_cpu( const int run, const int subrun, const int event, 
 		     std::vector<std::vector<larcv::SparseImage> >& adc_crops_vv,
 		     std::vector<std::vector<larcv::SparseImage> >& results_vv );
-
+  
 
   // interface: run cosmic mrcnn server
   int runCosmicMRCNNServer( const int run, const int subrun, const int event, 
@@ -257,7 +260,8 @@ private:
 			    std::vector<larcv::Image2D>& label_v,
 			    std::vector<std::vector<larcv::SparseImage> >& adc_crops_vv,
 			    std::vector<std::vector<larcv::Image2D> >& label_crops_vv,
-			    std::string infill_split_cfg );
+			    const float threshold,
+			    const std::string infill_split_cfg );
 
   // post-processing: infill
   void stitchSparseCrops( const std::vector< std::vector<larcv::SparseImage> >& netout_vv,
@@ -426,7 +430,7 @@ DLInterface::DLInterface(fhicl::ParameterSet const & p)
   // =================================
   // INFILL
   // -------------------------------
-  if ( *mode_v[kUBMRCNN] == kPyTorchCPU ) {
+  if ( *mode_v[kINFILL] == kPyTorchCPU ) {
     _sparseinfill_weight_file_v = p.get<std::vector<std::string> >("SparseInfill_WeightFiles");
   }
   
@@ -641,20 +645,19 @@ void DLInterface::produce(art::Event & e)
 			 in_label_v,
 			 infill_crop_vv, 
 			 infill_label_vv,
+			 10.0,
 			 _infill_split_cfg );
 
     switch (_infill_mode) {
     case kServer:
       infill_status = runInfillServer( e.id().run(), e.id().subRun(), e.id().event(),
 				       infill_crop_vv, 
-				       infill_label_vv,
 				       infill_netout_vv,
-				       in_label_v,
-				       infill_merged_out_v,
-				       10.0,
-				       _infill_split_cfg );
+				       10.0 );
       break;
     case kPyTorchCPU:
+      infill_status = runInfill_cpu( e.id().run(), e.id().subRun(), e.id().event(),
+				     infill_crop_vv, infill_netout_vv  );
       break;
     case kDoNotRun:
     case kDummyServer:
@@ -1435,6 +1438,7 @@ void DLInterface::splitImageForInfill( const std::vector<larcv::Image2D>& adc_v,
 				       std::vector< larcv::Image2D >& label_v,
 				       std::vector< std::vector<larcv::SparseImage> >& adc_crops_vv,
 				       std::vector<std::vector<larcv::Image2D> >& label_crops_vv,
+				       const float threshold,
 				       const std::string infill_crop_cfg ) {
 
   // make images where dead channels are labeled
@@ -1483,7 +1487,7 @@ void DLInterface::splitImageForInfill( const std::vector<larcv::Image2D>& adc_v,
   std::vector<larcv::Image2D> cropadc_v;
   std::vector<larcv::ROI>     adc_roi_v;
   LARCV_INFO() << ":: Run Infill splitter on ADC images" << std::endl;
-  ubsplit.process( adc_v, adc_crops_v, roi_crops_v );
+  ubsplit.process( adc_v, cropadc_v, adc_roi_v );
     
   std::vector<larcv::Image2D> croplabel_v;
   std::vector<larcv::ROI> label_roi_v;
@@ -1503,12 +1507,12 @@ void DLInterface::splitImageForInfill( const std::vector<larcv::Image2D>& adc_v,
     adc_crops_vv.at(p).reserve( nsets );
     label_crops_vv.at(p).reserve( nsets );
   }
-    
+  
   for ( size_t iset=0; iset<nsets; iset++ ) {
     for ( size_t p=0; p<adc_v.size(); p++ ) {
 	
       int imgindex = iset*adc_v.size()+p;
-
+      
       // get image2d
       auto& adcimg   = cropadc_v.at( imgindex );
       auto& labelimg = croplabel_v.at( imgindex );
@@ -1531,7 +1535,7 @@ void DLInterface::stitchSparseCrops( const std::vector< std::vector<larcv::Spars
 				     const std::vector<larcv::Image2D>& wholeview_adc_v,
 				     larcv::EventChStatus& ev_chstatus,
 				     std::vector< larcv::Image2D >& mergedout_v ) {
-    
+
   // create final output image
   mergedout_v.clear();
   
@@ -1561,9 +1565,7 @@ void DLInterface::stitchSparseCrops( const std::vector< std::vector<larcv::Spars
       
       // should be 1 in this vector: the predicted in-fill ADC values
       std::vector<larcv::Image2D> outdense = netout.as_Image2D();
-      if (debug) 
-	std::cout << __FUNCTION__ << ":" << __LINE__ 
-		  << ":: " << outdense.at(0).meta().dump() << std::endl;
+      LARCV_DEBUG() << ":: " << outdense.at(0).meta().dump() << std::endl;
       
       stitcher.Croploop( merge_meta,
 			 outdense.at(0), 
@@ -2014,21 +2016,19 @@ int DLInterface::runInfillServer( const int run, const int subrun, const int eve
  */
 int DLInterface::runInfill_cpu( const int run, const int subrun, const int event, 
 				std::vector<std::vector<larcv::SparseImage> >& adc_crops_vv,
-				std::vector<std::vector<larcv::SparseImage> >& results_vv,
-				const float threshold ) {
+				std::vector<std::vector<larcv::SparseImage> >& results_vv ) {
   
   bool debug  = ( _verbosity==0 ) ? true : false;
 
-  _sparseinfill_script->run_cosmic_mrcnn( adc_crops_vv,
-					  run, subrun, event,
-					  results_vv,
-					  debug );
+  _sparseinfill_script->run_sparse_cropped_infill( adc_crops_vv,
+						   run, subrun, event,
+						   results_vv,
+						   debug );
 
   
   return 0;
 }
   
-}
 
 /**
  * 

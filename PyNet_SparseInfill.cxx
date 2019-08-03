@@ -19,7 +19,7 @@ namespace ubdlintegration {
     larcv::SetPyUtil();
 
     std::cout << "import script" << std::endl;      
-    PyObject *pName   = PyUnicode_FromString("");
+    PyObject *pName   = PyUnicode_FromString("Infill_ForwardPass");
     pModule = PyImport_Import(pName);
     std::cout << "import module: " << pModule << std::endl;
     pFunc   = PyObject_GetAttrString(pModule,"forwardpass");
@@ -43,7 +43,6 @@ namespace ubdlintegration {
   int PyNetSparseInfill::run_sparse_cropped_infill( const std::vector< std::vector<larcv::SparseImage> >& cropped_vv, 
                                                     const int run, const int subrun, const int event,
                                                     std::vector<std::vector<larcv::SparseImage> >& results_vv,
-                                                    const float threshold,
                                                     bool debug ) {
 
     results_vv.clear();
@@ -66,17 +65,19 @@ namespace ubdlintegration {
         
         const larcv::SparseImage& spimg = cropped_v.at(idx);
         PyObject* bson = larcv::json::as_bson_pybytes( spimg, run, subrun, event, idx );
+	std::cout << "  [" << idx << "] add cropped image into python list" << std::endl;
 
         // set item for previously unitialized list
-        int status = PyList_SET_ITEM(pList, (Py_ssize_t)idx, bson );
-        if ( status==-1 ) {
-          throw std::runtime_error("[PyNetSparseInfill] trouble setting item for input bson list");
-        }
+        PyList_SET_ITEM(pList, (Py_ssize_t)idx, bson );
+        // if ( status==-1 ) {
+        //   throw std::runtime_error("[PyNetSparseInfill] trouble setting item for input bson list");
+        // }
       }
-      
+      std::cout << "[PyNetSparseInfill] filled bson list plane[" << planeid << "] size=" << PyList_Size(pList) << std::endl;
+
       PyObject *pWeightpath   = PyUnicode_FromString( _weight_file_v.at( planeid ).c_str() );
       
-      std::cout << "call function: " << pFunc << " bson=" << bson <<" weight=" << pWeightpath << std::endl;
+      std::cout << "[PyNetSparseInfill] call function: " << pFunc << " weight=" << pWeightpath << std::endl;
       PyObject *pReturn = PyObject_CallFunctionObjArgs(pFunc,pList,pWeightpath,NULL);
       std::cout << "python returned: " << pReturn << std::endl;
       
@@ -92,10 +93,10 @@ namespace ubdlintegration {
 	PyObject* sparseimg_bson = PyList_GetItem(pReturn,(Py_ssize_t)iout);
 	int ret_run, ret_subrun, ret_event, ret_id;
         
-	larcv::ClusterMask sparseout
+	larcv::SparseImage sparseout
 	  = larcv::json::sparseimg_from_bson_pybytes( sparseimg_bson,
                                                       ret_run, ret_subrun, ret_event, ret_id );
-	masks_v.emplace_back( std::move(sparseout) );
+	out_v.emplace_back( std::move(sparseout) );
       }
       
       results_vv.emplace_back( std::move(out_v) );

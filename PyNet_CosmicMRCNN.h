@@ -21,7 +21,8 @@ namespace ubdlintegration {
   class PyNetCosmicMRCNN {
     
   public:
-    PyNetCosmicMRCNN();
+    PyNetCosmicMRCNN( const std::vector<std::string>& weight_file_v,
+		      const std::vector<std::string>& config_file_v );
     virtual ~PyNetCosmicMRCNN();
 
     int run_cosmic_mrcnn( const std::vector<larcv::Image2D>& wholeview_v, 
@@ -34,7 +35,8 @@ namespace ubdlintegration {
 
     PyObject *pModule;
     PyObject *pFunc;
-    std::string _weight_dir;
+    std::vector<std::string> _weight_file_v;
+    std::vector<std::string> _config_file_v;
 
   };
 

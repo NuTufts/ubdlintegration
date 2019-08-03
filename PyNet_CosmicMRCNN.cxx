@@ -7,7 +7,8 @@
 namespace ubcv {
 namespace ubdlintegration {
 
-  PyNetCosmicMRCNN::PyNetCosmicMRCNN() 
+  PyNetCosmicMRCNN::PyNetCosmicMRCNN( const std::vector< std::string >& weight_file_v,
+				      const std::vector< std::string >& config_file_v ) 
     : pModule(nullptr),
       pFunc(nullptr)
   {
@@ -16,8 +17,6 @@ namespace ubdlintegration {
     Py_Initialize();
 
     std::cout << "import numpy array" << std::endl;
-    //import_array1(0);
-    //larcv::json::load_jsonutils();
     larcv::SetPyUtil();
 
     std::cout << "import script" << std::endl;      
@@ -29,7 +28,14 @@ namespace ubdlintegration {
     Py_DECREF(pName);
 
     // weight files
-    _weight_dir = "/uboone/app/users/tmw/ups_dev/products/ubdl/v1_0_0/Linux64bit+3.10-2.17_e17_prof/ublarcvserver/app/ubmrcnn/weights/ubmrcnn_mcc8_v1";
+    _weight_file_v.clear();
+    for ( auto const& weightfile : weight_file_v )
+      _weight_file_v.push_back( weightfile );
+
+    // config files
+    _config_file_v.clear();
+    for ( auto const& configfile : config_file_v )
+      _config_file_v.push_back( configfile );
 
   }
 
@@ -53,16 +59,10 @@ namespace ubdlintegration {
       
       PyObject* bson = larcv::json::as_pybytes( img, run, subrun, event, 0 );
 
-      char config[50];
-      sprintf( config, "pynet_deploy/mills_config_%d.yaml", (int)img.meta().plane() );
+      PyObject *pWeightpath   = PyUnicode_FromString( _weight_file_v.at( (int)img.meta().plane() ).c_str() );
+      PyObject *pConfigpath   = PyUnicode_FromString( _config_file_v.at( (int)img.meta().plane() ).c_str() );
       
-      char weight_path[512];
-      sprintf( weight_path, "%s/mcc8_mrcnn_plane%d.pth", _weight_dir.c_str(), (int)img.meta().plane() );
-
-      PyObject *pWeightpath   = PyUnicode_FromString(weight_path);
-      PyObject *pConfigpath   = PyUnicode_FromString(config);
-      
-      std::cout << "call function: " << pFunc << " bson=" << bson <<" wieght=" << pWeightpath << " config=" << pConfigpath << std::endl;
+      std::cout << "call function: " << pFunc << " bson=" << bson <<" weight=" << pWeightpath << " config=" << pConfigpath << std::endl;
       PyObject *pReturn = PyObject_CallFunctionObjArgs(pFunc,bson,pWeightpath,pConfigpath,NULL);
       std::cout << "python returned: " << pReturn << std::endl;
 
@@ -77,9 +77,10 @@ namespace ubdlintegration {
       for (int imask=0; imask<(int)nmasks; imask++ ) {
 	PyObject* maskbson = PyList_GetItem(pReturn,(Py_ssize_t)imask);
 	int ret_run, ret_subrun, ret_event, ret_id;
+
 	larcv::ClusterMask cmask 
-	  = larcv::json::clustermask_from_pybytes( maskbson,
-						   ret_run, ret_subrun, ret_event, ret_id );
+	  = larcv::json::clustermask_from_pybytes( maskbson, ret_run, ret_subrun, ret_event, ret_id );
+						   
 	masks_v.emplace_back( std::move(cmask) );
       }
       

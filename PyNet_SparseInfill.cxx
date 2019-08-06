@@ -21,9 +21,20 @@ namespace ubdlintegration {
     std::cout << "import script" << std::endl;      
     PyObject *pName   = PyUnicode_FromString("Infill_ForwardPass");
     pModule = PyImport_Import(pName);
-    std::cout << "import module: " << pModule << std::endl;
+    if ( !pModule ) {
+      throw std::runtime_error("failed to import import module 'Infill_ForwardPass'");
+    }
+    else {
+      std::cout << "[Infill] loaded Infill_ForwardPass module" << std::endl;
+    }
+
     pFunc   = PyObject_GetAttrString(pModule,"forwardpass");
-    std::cout << "got function: " << pFunc << std::endl;
+    if ( !pFunc ) {
+      throw std::runtime_error("failed to load function 'forwardpass' from module");
+    }
+    else {
+      std::cout << "[Infill] got function: " << pFunc << std::endl;
+    }
     Py_DECREF(pName);
 
     // weight files

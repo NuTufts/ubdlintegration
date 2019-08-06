@@ -1,3 +1,4 @@
+
 #include "PyNet_CosmicMRCNN.h"
 
 #include "larcv/core/DataFormat/SparseImage.h"
@@ -9,22 +10,30 @@ namespace ubdlintegration {
 
   PyNetCosmicMRCNN::PyNetCosmicMRCNN( const std::vector< std::string >& weight_file_v,
 				      const std::vector< std::string >& config_file_v ) 
-    : pModule(nullptr),
+    : larcv::larcv_base("PyNetCosmicMRCNN"),
+      pModule(nullptr),
       pFunc(nullptr)
   {
+    set_verbosity(larcv::msg::kDEBUG);
 
-    std::cout << "py initialize" << std::endl;
+    std::cout << "[PyNetCosmicMRCNN] py initialize" << std::endl;
     Py_Initialize();
 
-    std::cout << "import numpy array" << std::endl;
+    std::cout << "[PyNetCosmicMRCNN] import numpy array" << std::endl;
     larcv::SetPyUtil();
 
-    std::cout << "import script" << std::endl;      
+    LARCV_INFO() << "[PyNetCosmicMRCNN] import script: inference_mrcnn" << std::endl;      
     PyObject *pName   = PyUnicode_FromString("inference_mrcnn");
     pModule = PyImport_Import(pName);
-    std::cout << "import module: " << pModule << std::endl;
+    if ( !pModule ) {
+      std::string msg = "[PyNetCosmicMRCNN] inference_mrcnn could not be loaded";
+      PyErr_Print();
+      LARCV_CRITICAL() << msg << std::endl;
+      throw std::runtime_error(msg);
+    }
+    std::cout << "[PyNetCosmicMRCNN] import module: " << pModule << std::endl;
     pFunc   = PyObject_GetAttrString(pModule,"forwardpass");
-    std::cout << "got function: " << pFunc << std::endl;
+    std::cout << "[PyNetCosmicMRCNN] got function 'forwardpass': " << pFunc << std::endl;
     Py_DECREF(pName);
 
     // weight files
@@ -41,11 +50,11 @@ namespace ubdlintegration {
 
   PyNetCosmicMRCNN::~PyNetCosmicMRCNN() {
 
-    std::cout << "python finalize" << std::endl;
+    std::cout << "[PyNetCosmicMRCNN] python finalize" << std::endl;
     Py_Finalize();
     
   }
-
+  
   int PyNetCosmicMRCNN::run_cosmic_mrcnn( const std::vector<larcv::Image2D>& wholeview_v, 
 					  const int run, const int subrun, const int event, 
 					  const float threshold,

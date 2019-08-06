@@ -11,14 +11,15 @@ import traceback
 from ctypes import c_int
 import numpy as np
 
+# torch
+import torch
+
 # import larcv
 from ROOT import std
 from larcv import larcv
 from ublarcvapp import ublarcvapp
 larcv.json.load_jsonutils()
 
-# torch
-import torch
 
 # sparse model
 from sparseinfill import SparseInfill
@@ -247,7 +248,7 @@ if __name__ == "__main__":
                 
         print("Run nets")
         for p in [0,1,2]:
-            out_v = forwardpass( sparse_v[p], weights[p], 4 )
+            out_v = forwardpass( sparse_v[p], weights[p] )
             print("plane {} returned with {} outputs".format(p,len(out_v)))
                   
         break

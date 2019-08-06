@@ -1,3 +1,7 @@
 #!/bin/bash
 
-rsync -av /pnfs/uboone/resilient/users/tmw/model_data/mcc8_caffe_ubssnet_plane*.pytorchscript .
+export LD_LIBRARY_PATH=${LIBZMQ_FQ_DIR}/lib64:${LD_LIBRARY_PATH}
+export PYTHONPATH=
+
+ldd $UBCV_LIB/*.so
+ldd $LARCV_LIBDIR/*.so

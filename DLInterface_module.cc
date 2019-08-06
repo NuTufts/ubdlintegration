@@ -355,7 +355,7 @@ DLInterface::DLInterface(fhicl::ParameterSet const & p)
       *mode_v[inet] = kDummyServer;
     else {
       throw cet::exception("DLInterface") << "unrecognized network interface, " << inter << ". "
-					  << "choices: { DoNotRun, Server, PytorchCPU, TensorFlowCPU, DummyServer }"
+					  << "choices: { DoNotRun, Server, PyTorchCPU, TensorFlowCPU, DummyServer }"
 					  << std::endl;
     }
     LARCV_INFO() << "Network[ " << netname << " ] mode=" << inter << std::endl;
@@ -735,6 +735,8 @@ void DLInterface::produce(art::Event & e)
 
   // LArCV iomanager
   larcv::IOManager& io = _supera.driver().io_mutable();
+  io.set_verbosity( larcv::msg::kDEBUG );
+
   // save the wholeview images back to the supera IO
   larcv::EventImage2D* ev_imgs  = (larcv::EventImage2D*) io.get_data( larcv::kProductImage2D, "wire" );
   //std::cout << "wire eventimage2d=" << ev_imgs << std::endl;
@@ -830,8 +832,8 @@ void DLInterface::produce(art::Event & e)
   _out_larlite.next_event();
 
   // we clear entries ourselves
-  LARCV_INFO() << "clearing entry" << std::endl;
-  io.clear_entry();
+  //LARCV_INFO() << "clearing entry" << std::endl;
+  //io.clear_entry();
   
 }
 

@@ -12,13 +12,14 @@
  */
 
 #include <vector>
+#include "larcv/core/Base/larcv_base.h"
 #include "larcv/core/DataFormat/Image2D.h"
 #include "larcv/core/DataFormat/ClusterMask.h"
 
 namespace ubcv {
 namespace ubdlintegration {
 
-  class PyNetCosmicMRCNN {
+  class PyNetCosmicMRCNN : public larcv::larcv_base {
     
   public:
     PyNetCosmicMRCNN( const std::vector<std::string>& weight_file_v,

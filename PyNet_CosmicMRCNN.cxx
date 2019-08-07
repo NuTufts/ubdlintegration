@@ -1,5 +1,6 @@
-
 #include "PyNet_CosmicMRCNN.h"
+
+#include <sstream>
 
 #include "larcv/core/DataFormat/SparseImage.h"
 #include "larcv/core/json/json_utils.h"
@@ -24,10 +25,32 @@ namespace ubdlintegration {
 
     LARCV_INFO() << "[PyNetCosmicMRCNN] import script: inference_mrcnn" << std::endl;      
     PyObject *pName   = PyUnicode_FromString("inference_mrcnn");
-    pModule = PyImport_Import(pName);
+    try {
+      pModule = PyImport_Import(pName);
+    }
+    catch ( std::exception& e ) {
+      std::stringstream oops;
+      oops << "exception caught attempting to load inference_mrcnn module" << std::endl
+	   << " err: " << e.what() << std::endl
+	   << " pyerr: " << std::endl;
+      LARCV_NORMAL() << oops.str() << std::endl;
+      PyErr_Print();
+      LARCV_CRITICAL() << oops.str();
+    }
+
     if ( !pModule ) {
       std::string msg = "[PyNetCosmicMRCNN] inference_mrcnn could not be loaded";
+      LARCV_NORMAL() << "=====================================" << std::endl;
+      LARCV_NORMAL() << msg << std::endl;
       PyErr_Print();
+      LARCV_DEBUG() << "python path directories" << std::endl;
+      char pathname[10];
+      sprintf(pathname,"path");
+      PyObject* path = PySys_GetObject(pathname);
+      int nfolders = PyList_Size(path);
+      for ( int i=0; i<nfolders; i++ ) {
+	LARCV_DEBUG() << PyString_AsString( PyList_GetItem(path,(Py_ssize_t)i) ) << std::endl;
+      }
       LARCV_CRITICAL() << msg << std::endl;
       throw std::runtime_error(msg);
     }

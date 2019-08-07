@@ -43,9 +43,9 @@ DLInterface: {
                             "/pnfs/uboone/resilient/users/tmw/model_data/ubmrcnn_mcc8_v1/mcc8_mrcnn_plane1.pth",
                             "/pnfs/uboone/resilient/users/tmw/model_data/ubmrcnn_mcc8_v1/mcc8_mrcnn_plane2.pth"]
 
-  CosmicMRCNN_ConfigFiles: ["/pnfs/uboone/resilient/users/tmw/model_configs/ubmrcnn_mcc8_cfgs/mills_config_0.yaml",
-                            "/pnfs/uboone/resilient/users/tmw/model_configs/ubmrcnn_mcc8_cfgs/mills_config_1.yaml",
-                            "/pnfs/uboone/resilient/users/tmw/model_configs/ubmrcnn_mcc8_cfgs/mills_config_2.yaml"]
+  CosmicMRCNN_ConfigFiles: ["mills_config_0.yaml",
+                            "mills_config_1.yaml",
+                            "mills_config_2.yaml"]
 
   SparseInfill_WeightFiles: ["/pnfs/uboone/resilient/users/tmw/model_data/sparseinfill_v1/sparseinfill_uplane_test.tar",
                              "/pnfs/uboone/resilient/users/tmw/model_data/sparseinfill_v1/sparseinfill_vplane_test.tar",

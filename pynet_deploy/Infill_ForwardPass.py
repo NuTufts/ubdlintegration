@@ -14,12 +14,6 @@ import numpy as np
 # torch
 import torch
 
-# import larcv
-from ROOT import std
-from larcv import larcv
-from ublarcvapp import ublarcvapp
-larcv.json.load_jsonutils()
-
 
 # sparse model
 from sparseinfill import SparseInfill
@@ -29,6 +23,18 @@ def forwardpass( sparseimg_bson_list, checkpoint_file ):
     make tensor for coords (row,col,batch). expects an input consisting of a list of pybyte 
     objects containing json versions of SparseImage """
     print("[INFILL] forward pass")
+
+    # import larcv
+    print("[INFILL] Load modules: ROOT, larcv, ublarcvapp, jsonutils")
+
+    print("[INFILL] Load modules: ROOT")
+    from ROOT import std
+    print("[INFILL] Load modules: larcv")
+    from larcv import larcv
+    print("[INFILL] Load modules: ublarcapp")
+    from ublarcvapp import ublarcvapp
+    print("[INFILL] Load modules: load_jsonutils")
+    larcv.json.load_jsonutils
 
     batchsize = 1
     starttime = time.time()

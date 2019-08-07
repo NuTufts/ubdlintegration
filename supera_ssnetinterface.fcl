@@ -1,5 +1,5 @@
 ProcessDriver: {
-  Verbosity:    2
+  Verbosity:    1
   EnableFilter: false
   RandomAccess: false
 
@@ -17,7 +17,7 @@ ProcessDriver: {
 
   ProcessList: {
     SuperaMetaMaker: {
-      Verbosity: 1
+      Verbosity: 0
       MetaConfig: {
         MinTime:          2400
         MinWire:          0
@@ -36,6 +36,7 @@ ProcessDriver: {
       TickBackward:    false
     }
     SuperaChStatus: {
+      Verbosity: 0
       LArChStatusProducer: "chstatus"
       OutChStatusLabel: "wire"
     }    

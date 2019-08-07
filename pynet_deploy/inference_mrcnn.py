@@ -3,14 +3,20 @@ from __future__ import division
 from __future__ import print_function
 
 import os,sys
+from ctypes import c_int
 import numpy as np
 import torch
-from larcv import larcv
-from ctypes import c_int
-larcv.json.load_jsonutils()
 
 def forwardpass( dense_img_bson, weights_filepath, cfg_filepath ):
 
+    print("[INFILL] Load modules: ROOT, larcv, ublarcvapp, jsonutils")
+
+    print("[MRCNN] Load module: larcv")
+    from larcv import larcv
+    print("[MRCNN] Load module: jsonutils")
+    larcv.json.load_jsonutils
+
+    print("[MRCNN] Load modules: mask-rcnn.pytorch config")
     # mask rcnn: need mask-rcnn.pytorch/lib in PYTHONPATH
     from utils.collections import AttrDict
     from core.config import make_default_config
@@ -21,17 +27,24 @@ def forwardpass( dense_img_bson, weights_filepath, cfg_filepath ):
 
     from core.config import cfg, cfg_from_file, cfg_from_list, assert_and_infer_cfg
 
-    cfg_from_file( cfg_filepath )
+    print("[MRCNN] Configure from file")
+    try:
+        cfg_from_file( cfg_filepath )
+    except :
+        print("[MRCNN] ERROR LOADING CONFIG: {}".format( sys.exc_info()[0] ) )
+        return []
     cfg.TRAIN.DATASETS = ('particle_physics_train')
     cfg.MODEL.NUM_CLASSES = 7
     cfg.MODEL.LOAD_IMAGENET_PRETRAINED_WEIGHTS = False  # Don't need to load imagenet pretrained weights
     cfg.MODEL.DEVICE = "cpu"
 
+    print("[MRCNN] import more mrcnn")
     from core.test import im_detect_all
     import utils.net as net_utils
     import nn as maskrcnn_nn
     from modeling.model_builder import Generalized_RCNN
 
+    print("[MRCNN] build model")
     assert_and_infer_cfg()
     model = Generalized_RCNN()
 
@@ -46,7 +59,7 @@ def forwardpass( dense_img_bson, weights_filepath, cfg_filepath ):
 
     model.eval()
 
-    print("Loaded Model")
+    print("[MRCNN] Loaded Model")
     c_run = c_int()
     c_subrun = c_int()
     c_event = c_int()
@@ -132,15 +145,27 @@ if __name__ == "__main__":
     
     """ for testing """
     
-    print("Test Inference Mask-RCNN")
+    print("[mrcnn main] Test Inference Mask-RCNN")
 
+    print("[mrcnn main] load larcv")
+    from larcv import larcv
+
+    print("[mrcnn main] load larcv.json")
+    larcv.json.load_jsonutils()
+    print("{}".format(larcv.json.load_jsonutils))
+
+    print("[mrcnn main] load supera file")
     supera_file = sys.argv[1]
     io = larcv.IOManager(larcv.IOManager.kREAD,"supera",larcv.IOManager.kTickBackward)
     io.add_in_file( supera_file )
     io.initialize()
-
-    weights = [ os.environ["UBLARCVSERVER_BASEDIR"]+"/app/ubmrcnn/weights/ubmrcnn_mcc8_v1/mcc8_mrcnn_plane{}.pth".format(x) for x in range(3) ]
+    weight_dir = "/pnfs/uboone/resilient/users/tmw/model_data/ubmrcnn_mcc8_v1"
+    weights = [ weight_dir+"/mcc8_mrcnn_plane{}.pth".format(x) for x in range(3) ]
+    #weights = [ os.environ["UBLARCVSERVER_BASEDIR"]+"/app/ubmrcnn/weights/ubmrcnn_mcc8_v1/mcc8_mrcnn_plane{}.pth".format(x) for x in range(3) ]
     configs = [ "mills_config_{}.yaml".format(x) for x in range(3) ]
+
+    print("[mrcnn main] weights: {}".format(weights))
+    print("[mrcnn main] configs: {}".format(configs))
 
     nentries = io.get_n_entries()
 

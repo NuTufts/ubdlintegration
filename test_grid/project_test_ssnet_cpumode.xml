@@ -3,7 +3,7 @@
 <!-- Production Project -->
 
 <!DOCTYPE project [
-<!ENTITY release      "v08_00_00_13a" >
+<!ENTITY release      "v08_00_00_15" >
 <!ENTITY file_type    "mc"        >
 <!ENTITY run_type     "physics"   >
 <!ENTITY name         "ssnet_test">
@@ -27,8 +27,8 @@
   <!-- Larsoft information -->
   <!-- Remember to make/update your larsoft tarball and point to it here -->
   <larsoft>
-    <tag>v08_05_00_06</tag>
-    <local>/pnfs/uboone/resilient/users/tmw/tar/ubcv_pytorch.tar</local>
+    <tag>v08_05_00_08</tag>
+    <local>/pnfs/uboone/resilient/users/tmw/tar/ubdlintegration_v08_00_00_15_dl_br.tar</local>
     <qual>e17:prof</qual>
   </larsoft>
 
@@ -38,14 +38,14 @@
 
   <!-- Project stages -->
   <stage name="ssnet">
-    <fcl>dl_driver_cpu.fcl</fcl>
-    <!-- <initscript>/pnfs/uboone/resilient/users/tmw/fcls/init.sh</initscript> -->
-    <inputdef>prodgenie_bnb_nu_uboone_overlay_mcc9.0_run1_reco2</inputdef>
+    <fcl>dl_driver_server.fcl</fcl>
+    <initsource>/pnfs/uboone/resilient/users/tmw/fcls/init.sh</initsource>
+    <inputdef>prodgenie_bnb_intrinsic_nue_uboone_overlay_mcc9.1_run1_reco2</inputdef>
     <outdir>&logout;/&name;_&dl_part;/out/&release;</outdir>
     <logdir>&logout;/&name;_&dl_part;/log/&release;</logdir>
     <workdir>&projectout;</workdir>
-    <numjobs>10</numjobs>
-    <maxfilesperjob>10</maxfilesperjob>
+    <numjobs>1</numjobs>
+    <maxfilesperjob>1</maxfilesperjob>
     <datatier>larlite</datatier>
     <memory>8000</memory>
     <disk>100GB</disk>

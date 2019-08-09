@@ -12,20 +12,20 @@ namespace ubdlintegration {
       pFunc(nullptr)
   {
 
-    std::cout << "py initialize" << std::endl;
+    std::cout << "[PyNetSparseInfill] py initialize" << std::endl;
     Py_Initialize();
 
-    std::cout << "import numpy array" << std::endl;
+    std::cout << "[PyNetSparseInfill] import numpy array" << std::endl;
     larcv::SetPyUtil();
 
-    std::cout << "import script" << std::endl;      
+    std::cout << "[PyNetSparseInfill] import script" << std::endl;      
     PyObject *pName   = PyUnicode_FromString("Infill_ForwardPass");
     pModule = PyImport_Import(pName);
     if ( !pModule ) {
       throw std::runtime_error("failed to import import module 'Infill_ForwardPass'");
     }
     else {
-      std::cout << "[Infill] loaded Infill_ForwardPass module" << std::endl;
+      std::cout << "[PyNetSparseInfill] loaded Infill_ForwardPass module" << std::endl;
     }
 
     pFunc   = PyObject_GetAttrString(pModule,"forwardpass");
@@ -33,7 +33,7 @@ namespace ubdlintegration {
       throw std::runtime_error("failed to load function 'forwardpass' from module");
     }
     else {
-      std::cout << "[Infill] got function: " << pFunc << std::endl;
+      std::cout << "[PyNetSparseInfill] got function: " << pFunc << std::endl;
     }
     Py_DECREF(pName);
 
@@ -46,8 +46,17 @@ namespace ubdlintegration {
 
   PyNetSparseInfill::~PyNetSparseInfill() {
 
-    std::cout << "python finalize" << std::endl;
-    Py_Finalize();
+    int is_py_intialized = Py_IsInitialized();
+    std::cout << "[PyNetSparseInfill] attempt to run python finalize. is_intialized=" << is_py_intialized << std::endl;
+    try {
+      if ( is_py_intialized ) {
+	Py_Finalize();
+	std::cout << "[PyNetSparseInfill] successfully ran finalize" << std::endl;
+      }
+    }
+    catch ( std::exception& e) {
+      std::cout << "[PyNetSparseInfill] error in Py_Finalize: " << e.what() << std::endl;
+    }
     
   }
 
@@ -86,9 +95,9 @@ namespace ubdlintegration {
       }
       std::cout << "[PyNetSparseInfill] filled bson list plane[" << planeid << "] size=" << PyList_Size(pList) << std::endl;
 
-      PyObject *pWeightpath   = PyUnicode_FromString( _weight_file_v.at( planeid ).c_str() );
+      PyObject *pWeightpath   = PyString_FromString( _weight_file_v.at( planeid ).c_str() );
       
-      std::cout << "[PyNetSparseInfill] call function: " << pFunc << " weight=" << pWeightpath << std::endl;
+      std::cout << "[PyNetSparseInfill] call function: " << pFunc << " weight=" << PyString_AsString( pWeightpath ) << std::endl;
       PyObject *pReturn = PyObject_CallFunctionObjArgs(pFunc,pList,pWeightpath,NULL);
       std::cout << "python returned: " << pReturn << std::endl;
       

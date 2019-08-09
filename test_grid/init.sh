@@ -3,6 +3,8 @@
 export LD_LIBRARY_PATH=${LIBZMQ_FQ_DIR}/lib64:${LD_LIBRARY_PATH}
 #export PYTHONPATH=${PWD}:/pnfs/uboone/resilient/users/tmw/model_deploy_scripts:${PYTHONPATH}
 
+#export PYTHONPATH=/cvmfs/uboone.opensciencegrid.org/products/ubdl/v1_0_0/Linux64bit+3.10-2.17_e17_prof/ublarcvserver/networks/mask-rcnn.pytorch/lib:$PYTHONPATH
+
 ifdh cp /pnfs/uboone/resilient/users/tmw/model_deploy_scripts/inference_mrcnn.py inference_mrcnn.py
 ifdh cp /pnfs/uboone/resilient/users/tmw/model_deploy_scripts/Infill_ForwardPass.py Infill_ForwardPass.py
 export PYTHONPATH=${PWD}:${PYTHONPATH}
@@ -58,11 +60,10 @@ export PYTHONPATH=${PWD}:${PYTHONPATH}
 #ldd $UBCV_LIB/*.so
 #ldd $LARCV_LIBDIR/*.so
 
-#echo "<<PYTHONPATH>>"
-#echo $PYTHONPATH | sed 's|:|\n|g'
+echo "<<PYTHONPATH>>"
+echo $PYTHONPATH | sed 's|:|\n|g'
 #echo "<<LD_LIBRARY_PATH>>"
 #echo $LD_LIBRARY_PATH | sed 's|:|\n|g'
-#ls
 
 #echo "<< INFERENCE_MRCNN test >>"
 #python -c "import inference_mrcnn"
@@ -73,9 +74,32 @@ export PYTHONPATH=${PWD}:${PYTHONPATH}
 #echo "<< larcv.json test >>"
 #python -c "from larcv import larcv; larcv.json.load_jsonutils(); print \"larcv.json.load_jsonutils()\""
 
-echo "<< mrcnn run test >>"
+echo "<<<< cpu INFO >>>>>"
+cat /proc/cpuinfo
+
+echo "<<<< INFILL copy wights >>>>"
+ifdh cp /pnfs/uboone/resilient/users/tmw/model_data/sparseinfill_v1/sparseinfill_uplane_test.tar sparseinfill_uplane_test.tar
+ifdh cp /pnfs/uboone/resilient/users/tmw/model_data/sparseinfill_v1/sparseinfill_vplane_test.tar sparseinfill_vplane_test.tar
+ifdh cp /pnfs/uboone/resilient/users/tmw/model_data/sparseinfill_v1/sparseinfill_yplane_test.tar sparseinfill_yplane_test.tar
+
+echo "<<<< MRCNN RUN TESTS >>>>"
+echo "<< copy configs >>"
 ifdh cp /pnfs/uboone/resilient/users/tmw/model_configs/ubmrcnn_mcc8_cfgs/mills_config_0.yaml mills_config_0.yaml
 ifdh cp /pnfs/uboone/resilient/users/tmw/model_configs/ubmrcnn_mcc8_cfgs/mills_config_1.yaml mills_config_1.yaml
 ifdh cp /pnfs/uboone/resilient/users/tmw/model_configs/ubmrcnn_mcc8_cfgs/mills_config_2.yaml mills_config_2.yaml
-#ifdh cp /pnfs/uboone/resilient/users/tmw/model_configs/ubmrcnn_mcc8_cfgs/supera-Run005121-SubRun000004.root supera-Run005121-SubRun000004.root
-#python inference_mrcnn.py supera-Run005121-SubRun000004.root
+
+echo "<< copy weights >>"
+ifdh cp /pnfs/uboone/resilient/users/tmw/model_data/ubmrcnn_mcc8_v1/mcc8_mrcnn_plane0_weightsonly.pt mcc8_mrcnn_plane0_weightsonly.pt
+ifdh cp /pnfs/uboone/resilient/users/tmw/model_data/ubmrcnn_mcc8_v1/mcc8_mrcnn_plane1_weightsonly.pt mcc8_mrcnn_plane1_weightsonly.pt
+ifdh cp /pnfs/uboone/resilient/users/tmw/model_data/ubmrcnn_mcc8_v1/mcc8_mrcnn_plane2_weightsonly.pt mcc8_mrcnn_plane2_weightsonly.pt
+
+ls -lh
+
+#echo "<< setup GDB >>"
+#setup gdb v8_2_1
+
+#ifdh cp /pnfs/uboone/resilient/users/tmw/model_deploy_scripts/supera-Run005121-SubRun000004.root supera-Run005121-SubRun000004.root
+#gdb -batch -ex "run" -ex "bt" --args python inference_mrcnn.py supera-Run005121-SubRun000004.root
+
+echo "<< END OF INIT-SOURCE-SCRIPT >>"
+#exit 0

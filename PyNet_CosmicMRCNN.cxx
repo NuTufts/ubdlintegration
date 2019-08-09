@@ -73,8 +73,18 @@ namespace ubdlintegration {
 
   PyNetCosmicMRCNN::~PyNetCosmicMRCNN() {
 
-    std::cout << "[PyNetCosmicMRCNN] python finalize" << std::endl;
-    Py_Finalize();
+
+    int is_py_intialized = Py_IsInitialized();
+    std::cout << "[PyNetCosmicMRCNN] attempt to run python finalize. is_finalized=" << is_py_intialized << std::endl;
+    try {
+      if ( is_py_intialized ) {
+	Py_Finalize();
+	std::cout << "[PyNetCosmicMRCNN] successfully ran finalize" << std::endl;
+      }
+    }
+    catch ( std::exception& e) {
+      std::cout << "[PyNetCosmicMRCNN] error in Py_Finalize: " << e.what() << std::endl;
+    }
     
   }
   
@@ -88,39 +98,65 @@ namespace ubdlintegration {
     for ( auto const& img : wholeview_v ) {
 
       std::cout << "[PyNetCosmicMRCNN] image plane: " << img.meta().plane() << std::endl;
-      
-      PyObject* bson = larcv::json::as_pybytes( img, run, subrun, event, 0 );
 
-      PyObject *pWeightpath   = PyUnicode_FromString( _weight_file_v.at( (int)img.meta().plane() ).c_str() );
-      PyObject *pConfigpath   = PyUnicode_FromString( _config_file_v.at( (int)img.meta().plane() ).c_str() );
+      // Get the GIL
+      std::cout << "[PyNetCosmicMRCNN] Get the GIL" << std::endl;
+      PyGILState_STATE state = PyGILState_Ensure();
       
-      std::cout << "call function: " << pFunc << " bson=" << bson <<" weight=" << pWeightpath << " config=" << pConfigpath << std::endl;
-      PyObject *pReturn = PyObject_CallFunctionObjArgs(pFunc,bson,pWeightpath,pConfigpath,NULL);
-      std::cout << "python returned: " << pReturn << std::endl;
+      PyObject* pReturn = nullptr;
+
+      try {
+
+	PyObject* bson = larcv::json::as_pybytes( img, run, subrun, event, 0 );
+
+	PyObject *pWeightpath   = PyString_FromString( _weight_file_v.at( (int)img.meta().plane() ).c_str() );
+	PyObject *pConfigpath   = PyString_FromString( _config_file_v.at( (int)img.meta().plane() ).c_str() );
+      
+	std::cout << "[PyNetCosmicMRCNN] call function: " << pFunc 
+		  << " bson=" << bson 
+		  << " weight=" << PyString_AsString(pWeightpath) 
+		  << " config=" << PyString_AsString(pConfigpath) 
+		  << std::endl;
+
+	pReturn = PyObject_CallFunctionObjArgs(pFunc,bson,pWeightpath,pConfigpath,NULL);
+	std::cout << "[PyNetCosmicMRCNN] python returned: " << pReturn << std::endl;
+
+	std::cout << "[PyNetCosmicMRCNN] dereference arguments" << std::endl;
+	Py_DECREF(pWeightpath);
+	Py_DECREF(pConfigpath);
+	Py_DECREF(bson);
+
+	std::cout << "[PyNetCosmicMRCNN] release the GIL" << std::endl;
+	PyGILState_Release(state);
+      }
+      catch (std::exception&e) {
+	std::stringstream oops;
+	oops << "[PyNetCosmicMRCNN] error running function: " << e.what() << std::endl;
+	PyGILState_Release(state);
+	throw std::runtime_error(oops.str());
+      }
 
       if (!PyList_Check(pReturn)) {
 	throw std::runtime_error("Return from pynet_deploy.inference_mrcnn.forwardpass was no a list");
       }
-	
+      
       auto nmasks = PyList_Size(pReturn);
       
-      std::cout << "Number of masks returned from python: " << nmasks << std::endl;
+      std::cout << "[PyNetCosmicMRCNN] Number of masks returned from python: " << nmasks << std::endl;
       std::vector<larcv::ClusterMask> masks_v;
       for (int imask=0; imask<(int)nmasks; imask++ ) {
 	PyObject* maskbson = PyList_GetItem(pReturn,(Py_ssize_t)imask);
 	int ret_run, ret_subrun, ret_event, ret_id;
-
+	
 	larcv::ClusterMask cmask 
 	  = larcv::json::clustermask_from_pybytes( maskbson, ret_run, ret_subrun, ret_event, ret_id );
-						   
+	
 	masks_v.emplace_back( std::move(cmask) );
       }
       
       output_vv.emplace_back( std::move(masks_v) );
       
-      std::cout << "dereference string arguments/paths" << std::endl;
-      Py_DECREF(pWeightpath);
-      Py_DECREF(pConfigpath);
+      std::cout << "[PyNetCosmicMRCNN] dereference string arguments/paths" << std::endl;
       Py_DECREF(pReturn);
       
     }

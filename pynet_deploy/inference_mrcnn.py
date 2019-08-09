@@ -9,7 +9,7 @@ import torch
 
 def forwardpass( dense_img_bson, weights_filepath, cfg_filepath ):
 
-    print("[INFILL] Load modules: ROOT, larcv, ublarcvapp, jsonutils")
+    print("[MRCNN] forwardpass")
 
     print("[MRCNN] Load module: larcv")
     from larcv import larcv

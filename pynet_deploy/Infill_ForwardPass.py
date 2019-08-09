@@ -24,9 +24,6 @@ def forwardpass( sparseimg_bson_list, checkpoint_file ):
     objects containing json versions of SparseImage """
     print("[INFILL] forward pass")
 
-    # import larcv
-    print("[INFILL] Load modules: ROOT, larcv, ublarcvapp, jsonutils")
-
     print("[INFILL] Load modules: ROOT")
     from ROOT import std
     print("[INFILL] Load modules: larcv")
@@ -181,6 +178,12 @@ if __name__ == "__main__":
     """ for testing """
     
     print("Test Inference Sparse-Infill")
+    import ROOT 
+    from ROOT import std
+    from larcv import larcv
+    larcv.PSet
+    larcv.json.load_jsonutils
+    from ublarcvapp import ublarcvapp
 
     supera_file = sys.argv[1]
     io = larcv.IOManager(larcv.IOManager.kREAD,"supera",larcv.IOManager.kTickBackward)

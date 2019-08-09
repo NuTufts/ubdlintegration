@@ -9,7 +9,7 @@ import torch
 
 def forwardpass( dense_img_bson, weights_filepath, cfg_filepath ):
 
-    print("[INFILL] Load modules: ROOT, larcv, ublarcvapp, jsonutils")
+    print("[MRCNN] Forward pass")
 
     print("[MRCNN] Load module: larcv")
     from larcv import larcv
@@ -48,6 +48,7 @@ def forwardpass( dense_img_bson, weights_filepath, cfg_filepath ):
     assert_and_infer_cfg()
     model = Generalized_RCNN()
 
+    print("[MRCNN] load checkpoint/weight file: {}".format(weights_filepath))
     locations = {}
     for x in range(10):
         locations["cuda:%d"%(x)] = "cpu"
@@ -159,8 +160,9 @@ if __name__ == "__main__":
     io = larcv.IOManager(larcv.IOManager.kREAD,"supera",larcv.IOManager.kTickBackward)
     io.add_in_file( supera_file )
     io.initialize()
-    weight_dir = "/pnfs/uboone/resilient/users/tmw/model_data/ubmrcnn_mcc8_v1"
-    weights = [ weight_dir+"/mcc8_mrcnn_plane{}.pth".format(x) for x in range(3) ]
+    #weight_dir = "/pnfs/uboone/resilient/users/tmw/model_data/ubmrcnn_mcc8_v1"
+    #weights = [ weight_dir+"/mcc8_mrcnn_plane{}.pth".format(x) for x in range(3) ]
+    weights = [ "mcc8_mrcnn_plane{}_weightsonly.pt".format(x) for x in range(3) ]
     #weights = [ os.environ["UBLARCVSERVER_BASEDIR"]+"/app/ubmrcnn/weights/ubmrcnn_mcc8_v1/mcc8_mrcnn_plane{}.pth".format(x) for x in range(3) ]
     configs = [ "mills_config_{}.yaml".format(x) for x in range(3) ]
 

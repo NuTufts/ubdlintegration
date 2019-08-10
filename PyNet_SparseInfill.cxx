@@ -50,7 +50,7 @@ namespace ubdlintegration {
     std::cout << "[PyNetSparseInfill] attempt to run python finalize. is_intialized=" << is_py_intialized << std::endl;
     try {
       if ( is_py_intialized ) {
-	Py_Finalize();
+	//Py_Finalize(); // sloppy i do not do this, but seg faults during destruction of services if I do
 	std::cout << "[PyNetSparseInfill] successfully ran finalize" << std::endl;
       }
     }

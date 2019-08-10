@@ -78,7 +78,7 @@ namespace ubdlintegration {
     std::cout << "[PyNetCosmicMRCNN] attempt to run python finalize. is_finalized=" << is_py_intialized << std::endl;
     try {
       if ( is_py_intialized ) {
-	Py_Finalize();
+	//Py_Finalize(); // sloppy i do not do this, but seg faults during destruction of services if I do
 	std::cout << "[PyNetCosmicMRCNN] successfully ran finalize" << std::endl;
       }
     }

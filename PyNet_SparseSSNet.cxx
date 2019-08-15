@@ -62,6 +62,7 @@ namespace ubdlintegration {
 
   int PyNetSparseSSNet::run_sparse_ssnet( const std::vector< std::vector<larcv::SparseImage> >& cropped_vv, 
 					  const int run, const int subrun, const int event,
+					  const int nrows, const int ncols,
 					  std::vector<std::vector<larcv::SparseImage> >& results_vv,
 					  bool debug ) {
 
@@ -97,11 +98,13 @@ namespace ubdlintegration {
 
       PyObject *pWeightpath = PyString_FromString( _weight_file_v.at( planeid ).c_str() );
       PyObject* pPlaneID    = PyInt_FromLong( (long)planeid ); 
+      PyObject* pNROWS      = PyInt_FromLong( (long)nrows ); 
+      PyObject* pNCOLS      = PyInt_FromLong( (long)ncols ); 
       
       std::cout << "[PyNetSparseSSNet] call function: " << pFunc 
 		<< " weight=" << PyString_AsString( pWeightpath ) 
 		<< std::endl;
-      PyObject *pReturn = PyObject_CallFunctionObjArgs(pFunc,pPlaneID,pList,pWeightpath,NULL);
+      PyObject *pReturn = PyObject_CallFunctionObjArgs(pFunc,pPlaneID,pNROWS,pNCOLS,pList,pWeightpath,NULL);
       std::cout << "python returned: " << pReturn << std::endl;
       
       if (!PyList_Check(pReturn)) {
@@ -126,6 +129,9 @@ namespace ubdlintegration {
       
       std::cout << "dereference string arguments/paths" << std::endl;
       Py_DECREF(pWeightpath);
+      Py_DECREF(pPlaneID);
+      Py_DECREF(pNROWS);
+      Py_DECREF(pNCOLS);
       Py_DECREF(pPlaneID);
       Py_DECREF(pReturn);
       Py_DECREF(pList);

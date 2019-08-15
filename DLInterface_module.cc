@@ -2322,7 +2322,9 @@ int DLInterface::runSparseSSNet_cpu( const int run, const int subrun, const int 
   bool debug  = ( _verbosity==0 ) ? true : false;
 
   _sparsessnet_script->run_sparse_ssnet( sparse_input_vv,
-					 run, subrun, event,
+					 run, subrun, event
+,					 sparse_input_vv.front().front().meta(0).rows(),
+					 sparse_input_vv.front().front().meta(0).cols(),
 					 results_vv,
 					 debug );
   

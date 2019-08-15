@@ -18,7 +18,7 @@ from uresnet.trainval   import trainval
 Implements worker for SLAC's sparse uresnet
 """
 
-def forwardpass( plane, sparse_bson_list, weights_filepath ):
+def forwardpass( plane, nrows, ncols, sparse_bson_list, weights_filepath ):
 
     from ROOT import std
     from larcv import larcv
@@ -61,6 +61,7 @@ def forwardpass( plane, sparse_bson_list, weights_filepath ):
 
     print("[SparseSSNet] update/set config")
     config.update(args)
+    config.SPATIAL_SIZE = (nrows,ncols)
     config.TRAIN = False
         
     print("\n\n-- CONFIG --")
@@ -113,7 +114,7 @@ def forwardpass( plane, sparse_bson_list, weights_filepath ):
             #print("spimg_np: {}".format(spimg_np[:,0:2]))
 
             # coords
-            batch_np[startidx:endidx,0] = spimg_np[:,0] # tick
+            batch_np[startidx:endidx,0] = nrows-1-spimg_np[:,0] # tick
             batch_np[startidx:endidx,1] = spimg_np[:,1] # wire
 
             batch_np[startidx:endidx,2] = idx           # batch index
@@ -144,7 +145,7 @@ def forwardpass( plane, sparse_bson_list, weights_filepath ):
             #print("numpoints for img[{}]: {}".format(idx,npts))
             ssnetout_wcoords = np.zeros( (ssnetout_np.shape[0],ssnetout_np.shape[1]+2), dtype=np.float32 )
             
-            ssnetout_wcoords[:,0] = batch_np[startidx:endidx,0] # tick
+            ssnetout_wcoords[:,0] = nrows-1-batch_np[startidx:endidx,0] # tick
             ssnetout_wcoords[:,1] = batch_np[startidx:endidx,1] # wire
             
             # pixel value

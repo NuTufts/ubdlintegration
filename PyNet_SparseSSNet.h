@@ -26,6 +26,7 @@ namespace ubdlintegration {
 
     int run_sparse_ssnet( const std::vector< std::vector<larcv::SparseImage> >& cropped_vv, 
 			  const int run, const int subrun, const int event,
+			  const int nrows, const int ncols,
 			  std::vector<std::vector<larcv::SparseImage> >& results_vv,
 			  bool debug );
 

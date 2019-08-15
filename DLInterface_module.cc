@@ -163,7 +163,7 @@ private:
   bool _connect_to_server;
 
   // interface: pytorch cpu
-  std::vector<std::string> _pytorch_net_script; // one for each plane
+  std::vector<std::string> _mcc8_ssnet_script; // one for each plane
 #ifdef HAS_TORCH
   std::vector< std::shared_ptr<torch::jit::script::Module> > _module_ubssnet;  //< pointer to pytorch network
 #endif
@@ -527,7 +527,7 @@ DLInterface::DLInterface(fhicl::ParameterSet const & p)
   _imagesplitter.configure( split_cfg );
 
   // get the path to the saved ssnet
-  _pytorch_net_script = p.get< std::vector<std::string> >("PyTorchNetScript");
+  _mcc8_ssnet_script = p.get< std::vector<std::string> >("MCC8SSNetScript");
 
   // configuration for art product output
   _pixelthresholds_forsavedscores = p.get< std::vector<float> >("PixelThresholdsForSavedScoresPerPlane");
@@ -2293,13 +2293,13 @@ void DLInterface::endJob()
 void DLInterface::loadNetwork_PyTorchCPU() {
 #ifdef HAS_TORCH
   _module_ubssnet.clear();
-  for ( size_t iscript=0; iscript<_pytorch_net_script.size(); iscript++ ) {
+  for ( size_t iscript=0; iscript<_mcc8_ssnet_script.size(); iscript++ ) {
     std::cout << "Loading network[" << iscript << "] from " 
-	      << _pytorch_net_script[iscript] << " .... " << std::endl;
+	      << _mcc8_ssnet_script[iscript] << " .... " << std::endl;
     
     std::string scriptpath;
     cet::search_path finder("FHICL_FILE_PATH");
-    if( !finder.find_file(_pytorch_net_script[iscript], scriptpath) )
+    if( !finder.find_file(_mcc8_ssnet_script[iscript], scriptpath) )
       throw cet::exception("DLInterface") << "Unable to find torch script in "  << finder.to_string() << "\n";
     std::cout << "LOADING pytorch model data: " << scriptpath << std::endl;
 

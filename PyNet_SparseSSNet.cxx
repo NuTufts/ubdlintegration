@@ -19,10 +19,10 @@ namespace ubdlintegration {
     larcv::SetPyUtil();
 
     std::cout << "[PyNetSparseSSNet] import script" << std::endl;      
-    PyObject *pName   = PyUnicode_FromString("Infill_ForwardPass");
+    PyObject *pName   = PyUnicode_FromString("inference_sparse_ssnet");
     pModule = PyImport_Import(pName);
     if ( !pModule ) {
-      throw std::runtime_error("failed to import import module 'Infill_ForwardPass'");
+      throw std::runtime_error("failed to import import module 'inference_sparse_ssnet'");
     }
     else {
       std::cout << "[PyNetSparseSSNet] loaded Infill_ForwardPass module" << std::endl;

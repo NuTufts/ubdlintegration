@@ -22,10 +22,11 @@ DLInterface: {
   SaveDetsplitImagesInput:     false
   SaveNetOutSplitImagesOutput: false
 
-  SSNetMode:           "DoNotRun"
+  SSNetMode:           "PyTorchCPU"
   LArFlowMode:         "DoNotRun"
-  InfillMode:          "PyTorchCPU"
-  CosmicMRCNNMode:     "PyTorchCPU"
+  InfillMode:          "DoNotRun"
+  CosmicMRCNNMode:     "DoNotRun"
+  SparseSSNetMode:     "PyTorchCPU"
 
   ServerConfiguration: {
     BrokerAddress: "tcp://nudot.lns.mit.edu"
@@ -34,10 +35,10 @@ DLInterface: {
     RequestMaxTries: 3
     MaxBrokerReconnects: 3
   }
-
-  PyTorchNetScript: ["mcc8_caffe_ubssnet_plane0.pytorchscript",
-                     "mcc8_caffe_ubssnet_plane1.pytorchscript",
-                     "mcc8_caffe_ubssnet_plane2.pytorchscript"]
+    
+  MCC8SSNetScript: ["/uboone/data/users/tmw/dl_model_files/ssnet_mcc8/mcc8_caffe_ubssnet_plane0.pytorchscript",
+                    "/uboone/data/users/tmw/dl_model_files/ssnet_mcc8/mcc8_caffe_ubssnet_plane1.pytorchscript",
+                    "/uboone/data/users/tmw/dl_model_files/ssnet_mcc8/mcc8_caffe_ubssnet_plane2.pytorchscript"]
 
   CosmicMRCNN_WeightFiles: ["mcc8_mrcnn_plane0_weightsonly.pt",
                             "mcc8_mrcnn_plane1_weightsonly.pt",
@@ -51,9 +52,9 @@ DLInterface: {
                              "sparseinfill_vplane_test.tar",
                              "sparseinfill_yplane_test.tar"]
 
-  SparseInfill_WeightFiles: ["",
-                             "sparseinfill_vplane_test.tar",
-                             "sparseinfill_yplane_test.tar"]
+  SparseSSNet_WeightFiles: ["/uboone/data/users/tmw/dl_model_files/Plane0Weights-13999.ckpt",
+                            "/uboone/data/users/tmw/dl_model_files/Plane1Weights-17999.ckpt",
+                            "/uboone/data/users/tmw/dl_model_files/Plane2Weights-26999.ckpt"]
 
 
 }

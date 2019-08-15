@@ -1,1 +1,4 @@
 *~
+*.root
+mem.db
+*.pyc

@@ -1,0 +1,65 @@
+<?xml version="1.0"?>
+
+<!-- Production Project -->
+
+<!DOCTYPE project [
+<!ENTITY release      "v08_00_00_15" >
+<!ENTITY file_type    "mc"        >
+<!ENTITY run_type     "physics"   >
+<!ENTITY name         "ssnet_test">
+<!ENTITY dl_part      "p00"       >
+<!ENTITY username     "tmw"       >
+<!ENTITY projectout   "/pnfs/uboone/resilient/users/tmw/work">
+<!ENTITY logout       "/pnfs/uboone/persistent/users/tmw/ssnet_test">
+<!ENTITY test         "test" >
+]>
+
+<job>
+
+<project name="&name;">
+
+  <!-- Project size -->
+  <numevents>1000000</numevents>
+
+  <!-- Operating System -->
+  <os>SL7</os>
+
+  <!-- Larsoft information -->
+  <!-- Remember to make/update your larsoft tarball and point to it here -->
+  <larsoft>
+    <tag>v08_05_00_08</tag>
+    <local>/pnfs/uboone/resilient/users/tmw/tar/ubdlintegration_v08_00_00_15_dl_br.tar</local>
+    <qual>e17:prof</qual>
+  </larsoft>
+
+
+  <!-- Local FCL directory -->
+  <fcldir>/pnfs/uboone/resilient/users/tmw/fcls</fcldir>
+
+  <!-- Project stages -->
+  <stage name="ssnet">
+    <fcl>dl_driver_server.fcl</fcl>
+    <initsource>/pnfs/uboone/resilient/users/tmw/fcls/init.sh</initsource>
+    <endscript>/pnfs/uboone/resilient/users/tmw/fcls/cleanup.sh</endscript>
+    <inputdef>prodgenie_bnb_intrinsic_nue_uboone_overlay_mcc9.1_run1_reco2</inputdef>
+    <outdir>&logout;/&name;_&dl_part;/out/&release;</outdir>
+    <logdir>&logout;/&name;_&dl_part;/log/&release;</logdir>
+    <workdir>&projectout;</workdir>
+    <numjobs>1</numjobs>
+    <maxfilesperjob>1</maxfilesperjob>
+    <datatier>larlite</datatier>
+    <memory>8000</memory>
+    <disk>100GB</disk>
+    <resource>DEDICATED,OPPORTUNISTIC</resource>
+    <jobsub>--expected-lifetime=short</jobsub>
+  </stage>
+
+  <!-- file type -->
+  <filetype>&file_type;</filetype>
+
+  <!-- run type -->
+  <runtype>&run_type;</runtype>
+
+</project>
+
+</job>

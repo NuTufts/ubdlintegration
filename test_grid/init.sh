@@ -7,6 +7,7 @@ export LD_LIBRARY_PATH=${LIBZMQ_FQ_DIR}/lib64:${LD_LIBRARY_PATH}
 
 ifdh cp /pnfs/uboone/resilient/users/tmw/model_deploy_scripts/inference_mrcnn.py inference_mrcnn.py
 ifdh cp /pnfs/uboone/resilient/users/tmw/model_deploy_scripts/Infill_ForwardPass.py Infill_ForwardPass.py
+ifdh cp /pnfs/uboone/resilient/users/tmw/model_deploy_scripts/inference_sparse_ssnet.py inference_sparse_ssnet.py
 export PYTHONPATH=${PWD}:${PYTHONPATH}
 
 # larlite
@@ -93,13 +94,20 @@ ifdh cp /pnfs/uboone/resilient/users/tmw/model_data/ubmrcnn_mcc8_v1/mcc8_mrcnn_p
 ifdh cp /pnfs/uboone/resilient/users/tmw/model_data/ubmrcnn_mcc8_v1/mcc8_mrcnn_plane1_weightsonly.pt mcc8_mrcnn_plane1_weightsonly.pt
 ifdh cp /pnfs/uboone/resilient/users/tmw/model_data/ubmrcnn_mcc8_v1/mcc8_mrcnn_plane2_weightsonly.pt mcc8_mrcnn_plane2_weightsonly.pt
 
-ls -lh
-
 #echo "<< setup GDB >>"
 #setup gdb v8_2_1
 
 #ifdh cp /pnfs/uboone/resilient/users/tmw/model_deploy_scripts/supera-Run005121-SubRun000004.root supera-Run005121-SubRun000004.root
 #gdb -batch -ex "run" -ex "bt" --args python inference_mrcnn.py supera-Run005121-SubRun000004.root
+
+echo "<<< SPARSE URESNET >>>>>"
+echo "<< copy weights >>"
+ifdh cp /pnfs/uboone/resilient/users/tmw/model_data/sparse_uresnet_mcc9/Plane0Weights-13999.ckpt Plane0Weights-13999.ckpt
+ifdh cp /pnfs/uboone/resilient/users/tmw/model_data/sparse_uresnet_mcc9/Plane1Weights-17999.ckpt Plane1Weights-17999.ckpt
+ifdh cp /pnfs/uboone/resilient/users/tmw/model_data/sparse_uresnet_mcc9/Plane2Weights-26999.ckpt Plane2Weights-26999.ckpt
+
+ls -lh
+
 
 echo "<< END OF INIT-SOURCE-SCRIPT >>"
 #exit 0

@@ -22,7 +22,7 @@ DLInterface: {
   SaveDetsplitImagesInput:     false
   SaveNetOutSplitImagesOutput: false
 
-  SSNetMode:           "PyTorchCPU"
+  SSNetMode:           "DoNotRun"
   LArFlowMode:         "DoNotRun"
   InfillMode:          "DoNotRun"
   CosmicMRCNNMode:     "DoNotRun"
@@ -36,9 +36,9 @@ DLInterface: {
     MaxBrokerReconnects: 3
   }
     
-  MCC8SSNetScript: ["/uboone/data/users/tmw/dl_model_files/ssnet_mcc8/mcc8_caffe_ubssnet_plane0.pytorchscript",
-                    "/uboone/data/users/tmw/dl_model_files/ssnet_mcc8/mcc8_caffe_ubssnet_plane1.pytorchscript",
-                    "/uboone/data/users/tmw/dl_model_files/ssnet_mcc8/mcc8_caffe_ubssnet_plane2.pytorchscript"]
+  MCC8SSNetScript: ["mcc8_caffe_ubssnet_plane0.pytorchscript",
+                    "mcc8_caffe_ubssnet_plane1.pytorchscript",
+                    "mcc8_caffe_ubssnet_plane2.pytorchscript"]
 
   CosmicMRCNN_WeightFiles: ["mcc8_mrcnn_plane0_weightsonly.pt",
                             "mcc8_mrcnn_plane1_weightsonly.pt",

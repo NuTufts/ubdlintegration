@@ -322,6 +322,10 @@ private:
   void saveSparseSSNetArtProducts( art::Event& ev, 
 				   const std::vector<std::vector<larcv::SparseImage> >& sparse_ssnet_out_vv );
 
+  void saveSparseSSNetLArCVProducts( larcv::IOManager& io, 
+				     const std::vector<larcv::Image2D>& wholeview_v,
+				     std::vector<std::vector<larcv::SparseImage> >& sparse_ssnet_out_vv );
+
 };
 
 /**
@@ -785,25 +789,27 @@ void DLInterface::produce(art::Event & e)
     std::vector<float> sparse_ssnet_thresh(1,10.0);
     for ( size_t p=0; p<wholeview_v.size(); p++ ) {
       std::vector<const larcv::Image2D*> pimg_v;
+      pimg_v.push_back( &wholeview_v.at(p) );
       larcv::SparseImage spimg( pimg_v, sparse_ssnet_thresh );
       std::vector<larcv::SparseImage> spimg_v;
       spimg_v.emplace_back( std::move(spimg) );
       sparse_ssnet_input_vv.emplace_back( std::move(spimg_v) );
     }
 
-    switch (_infill_mode) {
+    switch (_sparse_ssnet_mode) {
+    case kDoNotRun:
+      break;
     case kPyTorchCPU:
-      infill_status = runSparseSSNet_cpu( e.id().run(), e.id().subRun(), e.id().event(),
-					  sparse_ssnet_input_vv, sparse_ssnet_netout_vv );
+      sparse_ssnet_status = runSparseSSNet_cpu( e.id().run(), e.id().subRun(), e.id().event(),
+						sparse_ssnet_input_vv, sparse_ssnet_netout_vv );
       break;
     case kServer:
-    case kDoNotRun:
     case kDummyServer:
     case kTensorFlowCPU:
     default:
       throw cet::exception("DLInterface") 
 	<< "Attempting to run sparse ssnet network in unimplemented mode "
-	<< "(" << _infill_mode << ")." << std::endl;      
+	<< "(" << _sparse_ssnet_mode << ")." << std::endl;      
       break;
     }
     if ( sparse_ssnet_status!= 0 ) {
@@ -811,7 +817,7 @@ void DLInterface::produce(art::Event & e)
 	<< "Error running Sparse SSNet Network" << std::endl;
     }
   }
-
+  
   // clear infill crops: not needed unless for debug downstream
   saveSparseSSNetArtProducts( e, sparse_ssnet_netout_vv );
 
@@ -828,17 +834,6 @@ void DLInterface::produce(art::Event & e)
   larcv::IOManager& io = _supera.driver().io_mutable();
   io.set_verbosity( larcv::msg::kDEBUG );
 
-  // save the wholeview images back to the supera IO
-  larcv::EventImage2D* ev_imgs  = (larcv::EventImage2D*) io.get_data( larcv::kProductImage2D, "wire" );
-  //std::cout << "wire eventimage2d=" << ev_imgs << std::endl;
-  ev_imgs->Emplace( std::move(wholeview_v) );
-
-  // save detsplit input
-  larcv::EventImage2D* ev_splitdet = nullptr;
-  if ( _save_detsplit_input ) {
-    ev_splitdet = (larcv::EventImage2D*) io.get_data( larcv::kProductImage2D, "detsplit" );
-    ev_splitdet->Emplace( std::move(splitimg_v) );
-  }
 
   // ssnet
   // -------
@@ -892,6 +887,23 @@ void DLInterface::produce(art::Event & e)
   
   // sparse ssnet
   // --------------
+  saveSparseSSNetLArCVProducts( _supera.driver().io_mutable(), wholeview_v, sparse_ssnet_netout_vv );
+
+  // INUT IMAGES: wholeview and split
+  // ---------------------------------
+  // saved last as some functions above require them
+
+  // save the wholeview images back to the supera IO
+  larcv::EventImage2D* ev_imgs  = (larcv::EventImage2D*) io.get_data( larcv::kProductImage2D, "wire" );
+  //std::cout << "wire eventimage2d=" << ev_imgs << std::endl;
+  ev_imgs->Emplace( std::move(wholeview_v) );
+
+  // save detsplit input
+  larcv::EventImage2D* ev_splitdet = nullptr;
+  if ( _save_detsplit_input ) {
+    ev_splitdet = (larcv::EventImage2D*) io.get_data( larcv::kProductImage2D, "detsplit" );
+    ev_splitdet->Emplace( std::move(splitimg_v) );
+  }
 
   // ------------------
   // save entry: larcv
@@ -981,24 +993,24 @@ int DLInterface::runSupera( art::Event& e,
     try {
       *ev_chstatus = (larcv::EventChStatus*) _supera.driver().io_mutable().get_data( larcv::kProductChStatus, "wire" );
 
-      if ( _verbosity==larcv::msg::kDEBUG ) {
-	LARCV_DEBUG() << "======================================" << std::endl;
-	LARCV_DEBUG() << " CHECK CHSTATUS INFO" << std::endl;
-	size_t nwires[3] = { 2400, 2400, 3456 };
-	for ( size_t p=0; p<wholeview_imgs.size(); p++ ) {
-	  LARCV_DEBUG() << " [plane " << p << "] --------- " << std::endl;
-	  int nbad = 0;
-	  auto& chstatus = (*ev_chstatus)->Status((larcv::PlaneID_t)p);
-	  for (size_t w=0; w<nwires[p]; w++ ) {
-	    if ( chstatus.Status(w)!=4 ) {
-	      LARCV_DEBUG() << "  bad wire: " << w << std::endl;
-	      nbad++;
-	    }
-	  }
-	  LARCV_DEBUG() << " plane nbad wires: " << nbad << std::endl;
-	}
-	LARCV_DEBUG() << "======================================" << std::endl;
-      }
+      // if ( _verbosity==larcv::msg::kDEBUG ) {
+      // 	LARCV_DEBUG() << "======================================" << std::endl;
+      // 	LARCV_DEBUG() << " CHECK CHSTATUS INFO" << std::endl;
+      // 	size_t nwires[3] = { 2400, 2400, 3456 };
+      // 	for ( size_t p=0; p<wholeview_imgs.size(); p++ ) {
+      // 	  LARCV_DEBUG() << " [plane " << p << "] --------- " << std::endl;
+      // 	  int nbad = 0;
+      // 	  auto& chstatus = (*ev_chstatus)->Status((larcv::PlaneID_t)p);
+      // 	  for (size_t w=0; w<nwires[p]; w++ ) {
+      // 	    if ( chstatus.Status(w)!=4 ) {
+      // 	      LARCV_DEBUG() << "  bad wire: " << w << std::endl;
+      // 	      nbad++;
+      // 	    }
+      // 	  }
+      // 	  LARCV_DEBUG() << " plane nbad wires: " << nbad << std::endl;
+      // 	}
+      // 	LARCV_DEBUG() << "======================================" << std::endl;
+      // }
     }
     catch (std::exception& e ) {
       std::stringstream errout;
@@ -2008,7 +2020,6 @@ void DLInterface::saveCosmicMRCNNArtProducts( art::Event& ev,
  * @param[inout] ev art Event container we will add results to
  * @param[in] sparse_ssnet_out_vv a vector of sparse images for each plane
  */
-
 void DLInterface::saveSparseSSNetArtProducts( art::Event& ev, 
 					      const std::vector<std::vector<larcv::SparseImage> >& sparse_ssnet_out_vv ) {
 
@@ -2024,6 +2035,106 @@ void DLInterface::saveSparseSSNetArtProducts( art::Event& ev,
   
   // fill empty
   ev.put( std::move(sparse_ssnet_v), "sparsessnet" );
+  return;
+
+}
+
+/**
+ * create larcv objects for SparseSSNet
+ *
+ * @param[inout] ev art Event container we will add results to
+ * @param[in] sparse_ssnet_out_vv a vector of sparse images for each plane
+ */
+void DLInterface::saveSparseSSNetLArCVProducts( larcv::IOManager& io,
+						const std::vector<larcv::Image2D>& wholeview_v,
+						std::vector<std::vector<larcv::SparseImage> >& sparse_ssnet_out_vv ) {
+
+  LARCV_INFO() << "saving Sparse SSNet Products into LArCV event" << std::endl;
+  
+  larcv::EventImage2D* uburn[3] = {nullptr,nullptr,nullptr};
+  uburn[0] = (larcv::EventImage2D*)io.get_data(larcv::kProductImage2D, "ubspurn_plane0");
+  uburn[1] = (larcv::EventImage2D*)io.get_data(larcv::kProductImage2D, "ubspurn_plane1");
+  uburn[2] = (larcv::EventImage2D*)io.get_data(larcv::kProductImage2D, "ubspurn_plane2");
+
+  larcv::EventImage2D* ev_prediction = (larcv::EventImage2D*)io.get_data(larcv::kProductImage2D, "sparseuresnet_prediction" );
+
+  // we also the sparse data from the network to make shower and track score images
+  for ( size_t p=0; p<3; p++ ) {
+    larcv::Image2D shower(wholeview_v.at(p).meta());
+    larcv::Image2D track( wholeview_v.at(p).meta());
+    larcv::Image2D pred(  wholeview_v.at(p).meta());
+    shower.paint(0);
+    track.paint(0);
+    pred.paint(0);
+
+    const larcv::ImageMeta& meta = wholeview_v.at(p).meta();
+    auto& sparse_v = sparse_ssnet_out_vv.at(p);
+
+    for ( auto& spimg : sparse_v ) {
+      int nfeatures = spimg.nfeatures();
+      int stride = nfeatures+2;
+      int npts = spimg.pixellist().size()/stride;
+      auto const& spmeta = spimg.meta(0);
+
+      for (int ipt=0; ipt<npts; ipt++) {
+	int row = spimg.pixellist().at( ipt*stride+0 );
+	int col = spimg.pixellist().at( ipt*stride+1 );
+
+	int xrow = meta.row( spmeta.pos_y( row ) );
+	int xcol = meta.col( spmeta.pos_x( col ) );
+
+	float hip = spimg.pixellist().at( ipt*stride+2 );
+	float mip = spimg.pixellist().at( ipt*stride+3 );
+	float shr = spimg.pixellist().at( ipt*stride+4 );
+	float dlt = spimg.pixellist().at( ipt*stride+5 );
+	float mic = spimg.pixellist().at( ipt*stride+6 );
+
+	float shower_score = shr+dlt+mic;
+	float track_score  = hip+mip;
+
+	shower.set_pixel( xrow, xcol, shower_score );
+	track.set_pixel(  xrow, xcol, track_score );
+	
+	int max_idx = 0;
+	float max_val = -1;
+	for ( int i=0; i<5; i++ ) {
+	  if ( spimg.pixellist().at( ipt*stride+2+i )>max_val ) {
+	    max_idx = i;
+	    max_val = spimg.pixellist().at( ipt*stride+2+i );
+	  }
+	}
+	int pred_idx = 0;
+	if ( max_val<0.5 )  {
+	  pred_idx = 1; // background
+	}
+	else {
+	  if ( max_idx==0 )
+	    pred_idx = 2; // hip
+	  else if( max_idx==1 )
+	    pred_idx = 3; // mip
+	  else
+	    pred_idx  = 4; // shower
+	}
+	pred.set_pixel( xrow, xcol, (float)pred_idx );
+      }//end of loop over points
+    }//loop over sparse images
+
+    uburn[p]->Emplace( std::move(shower) );
+    uburn[p]->Emplace( std::move(track) );
+
+    ev_prediction->Emplace( std::move(pred) );
+
+  }//loop over planes
+
+  // we store the raw sparse images.
+  larcv::EventSparseImage* ev_sparseout = (larcv::EventSparseImage*)io.get_data(larcv::kProductSparseImage, "sparseuresnetout" );
+  for ( size_t p=0; p<3; p++ ) {
+    auto& sparse_v = sparse_ssnet_out_vv.at(p);
+    for ( auto& spimg : sparse_v ) {
+      ev_sparseout->Emplace( std::move(spimg) );
+    }
+  }
+
   return;
 
 }
@@ -2260,6 +2371,13 @@ void DLInterface::beginJob()
     _sparseinfill_script = new ubcv::ubdlintegration::PyNetSparseInfill(  _sparseinfill_weight_file_v );
   }
 
+  // python script interface for sparse ssnet
+  _sparsessnet_script = nullptr;
+  if ( _sparse_ssnet_mode==kPyTorchCPU ) {
+    _sparsessnet_script = new ubcv::ubdlintegration::PyNetSparseSSNet(  _sparsessnet_weight_file_v );
+  }
+
+
 }
 
 /**
@@ -2281,6 +2399,9 @@ void DLInterface::endJob()
 
   if ( _sparseinfill_script )
     delete _sparseinfill_script;
+
+  if ( _sparsessnet_script )
+    delete _sparsessnet_script;
     
 }
 

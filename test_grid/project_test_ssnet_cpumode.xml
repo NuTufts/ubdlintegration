@@ -40,6 +40,7 @@
   <stage name="ssnet">
     <fcl>dl_driver_server.fcl</fcl>
     <initsource>/pnfs/uboone/resilient/users/tmw/fcls/init.sh</initsource>
+    <endscript>/pnfs/uboone/resilient/users/tmw/fcls/cleanup.sh</endscript>
     <inputdef>prodgenie_bnb_intrinsic_nue_uboone_overlay_mcc9.1_run1_reco2</inputdef>
     <outdir>&logout;/&name;_&dl_part;/out/&release;</outdir>
     <logdir>&logout;/&name;_&dl_part;/log/&release;</logdir>

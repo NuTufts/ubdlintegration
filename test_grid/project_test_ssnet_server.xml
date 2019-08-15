@@ -39,7 +39,7 @@
   <!-- Project stages -->
   <stage name="ssnet">
     <fcl>dl_driver_server.fcl</fcl>
-    <!-- <initscript>/pnfs/uboone/resilient/users/tmw/fcls/init.sh</initscript> -->
+    <initscript>/pnfs/uboone/resilient/users/tmw/fcls/init.sh</initscript>
     <inputdef>prodgenie_bnb_nu_uboone_overlay_mcc9.0_run1_reco2</inputdef>
     <outdir>&logout;/&name;_&dl_part;/out/&release;</outdir>
     <logdir>&logout;/&name;_&dl_part;/log/&release;</logdir>

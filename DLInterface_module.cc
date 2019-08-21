@@ -466,8 +466,29 @@ DLInterface::DLInterface(fhicl::ParameterSet const & p)
   // UB-MRCNN
   // -------------------------------
   if ( *mode_v[kUBMRCNN] == kPyTorchCPU ) {
-    _ubmrcnn_weight_file_v = p.get<std::vector<std::string> >("CosmicMRCNN_WeightFiles");
-    _ubmrcnn_config_file_v = p.get<std::vector<std::string> >("CosmicMRCNN_ConfigFiles");
+    // weight files
+    std::vector<std::string> ubmrcnn_weight_v = p.get<std::vector<std::string> >("CosmicMRCNN_WeightFiles");
+    for ( auto& weightfile : ubmrcnn_weight_v ) {
+      cet::search_path ubmrcnn_weight_finder("FHICL_FILE_PATH");
+      std::string weight_fullpath;
+      if (!ubmrcnn_weight_finder.find_file( weightfile, weight_fullpath ) ) {
+	throw cet::exception("DLInterface")
+	  << "Unable to find ubMaskRCNN weight file: " << weightfile << std::endl;
+      }
+      _ubmrcnn_weight_file_v.push_back( weight_fullpath );
+    }
+    // config files
+    std::vector<std::string> ubmrcnn_config_v = p.get<std::vector<std::string> >("CosmicMRCNN_ConfigFiles");
+    for ( auto& configfile : ubmrcnn_config_v ) {
+      cet::search_path ubmrcnn_config_finder("FHICL_FILE_PATH");
+      std::string config_fullpath;
+      if (!ubmrcnn_config_finder.find_file( configfile, config_fullpath ) ) {
+	throw cet::exception("DLInterface")
+	  << "Unable to find ubMaskRCNN config file: " << configfile << std::endl;
+      }
+      _ubmrcnn_config_file_v.push_back( config_fullpath );
+    }
+
   }
 
   // -------------------------------
@@ -496,8 +517,10 @@ DLInterface::DLInterface(fhicl::ParameterSet const & p)
     _sparsessnet_weight_file_v = p.get<std::vector<std::string> >("SparseSSNet_WeightFiles");
   }
   else {
-    throw cet::exception("DLInterface")
-      << "unsupported interface for SparseSSNET model: " << *mode_v[kSparseSSNET] << std::endl;
+    if ( ! *mode_v[kSparseSSNET]==kDoNotRun ) {
+      throw cet::exception("DLInterface")
+	<< "unsupported interface for SparseSSNET model: " << *mode_v[kSparseSSNET] << std::endl;
+    }
   }
 
   // =================================
@@ -2050,6 +2073,8 @@ void DLInterface::saveSparseSSNetLArCVProducts( larcv::IOManager& io,
 						std::vector<std::vector<larcv::SparseImage> >& sparse_ssnet_out_vv ) {
 
   LARCV_INFO() << "saving Sparse SSNet Products into LArCV event" << std::endl;
+  if ( sparse_ssnet_out_vv.size()==0 )
+    sparse_ssnet_out_vv.resize(3);
   
   larcv::EventImage2D* uburn[3] = {nullptr,nullptr,nullptr};
   uburn[0] = (larcv::EventImage2D*)io.get_data(larcv::kProductImage2D, "ubspurn_plane0");

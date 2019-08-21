@@ -18,14 +18,13 @@ DLInterface: {
   OpFlashProducerName: "simpleFlashBeam"
   SSNetCropMethod:     "FlashCROI"
   UBCropConfig:        "ubcrop.cfg"
-  InfillCropConfig:    "infill_split.cfg"
   SaveDetsplitImagesInput:     false
   SaveNetOutSplitImagesOutput: false
 
   SSNetMode:           "DoNotRun"
   LArFlowMode:         "DoNotRun"
-  InfillMode:          "DoNotRun"
-  CosmicMRCNNMode:     "DoNotRun"
+  InfillMode:          "PyTorchCPU"
+  CosmicMRCNNMode:     "PyTorchCPU"
   SparseSSNetMode:     "PyTorchCPU"
 
   ServerConfiguration: {
@@ -51,10 +50,12 @@ DLInterface: {
   SparseInfill_WeightFiles: ["sparseinfill_uplane_test.tar",
                              "sparseinfill_vplane_test.tar",
                              "sparseinfill_yplane_test.tar"]
+  SparseInfillOnlyCROI: true
+  InfillCropConfig:     "infill_split.cfg"
 
-  SparseSSNet_WeightFiles: ["Plane0Weights-13999.ckpt",
-                            "Plane1Weights-17999.ckpt",
-                            "Plane2Weights-26999.ckpt"]
+  SparseSSNet_WeightFiles: ["sparse_uresnet_v0_plane0_weights-13999.ckpt",
+                            "sparse_uresnet_v0_plane1_weights-17999.ckpt",
+                            "sparse_uresnet_v0_plane2_weights-26999.ckpt"]
 
 
 }

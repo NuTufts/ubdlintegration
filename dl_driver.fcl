@@ -24,7 +24,7 @@ DLInterface: {
   SSNetMode:           "DoNotRun"
   LArFlowMode:         "DoNotRun"
   InfillMode:          "PyTorchCPU"
-  CosmicMRCNNMode:     "PytorchCPU"
+  CosmicMRCNNMode:     "PyTorchCPU"
   SparseSSNetMode:     "PyTorchCPU"
 
   ServerConfiguration: {

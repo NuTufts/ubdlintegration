@@ -141,6 +141,7 @@ private:
   ublarcvapp::ubdllee::FixedCROIFromFlashAlgo _croifromflashalgo; //< croi from flash
   std::string _ubcrop_trueflow_cfg; //< config for the ssnet/larflow splitting and cropping algorithm
   std::string _infill_split_cfg;    //< config for the infill splitting and cropping algorithm
+  bool        _infill_limit_crops_to_croi; //< if true, limit crops to evaluate to be within the croi
   bool        _save_detsplit_input;
   bool        _save_detsplit_output;
   std::string _opflash_producer_name;
@@ -239,6 +240,7 @@ private:
 		       const float threshold );
   // interface: infill cpu
   int runInfill_cpu( const int run, const int subrun, const int event, 
+		     const std::vector<larcv::ROI>& croi_v,
 		     std::vector<std::vector<larcv::SparseImage> >& adc_crops_vv,
 		     std::vector<std::vector<larcv::SparseImage> >& results_vv );
   
@@ -533,6 +535,9 @@ DLInterface::DLInterface(fhicl::ParameterSet const & p)
   else
     LARCV_DEBUG() << "UBSplitDetector(infill) config path: " << _infill_split_cfg << std::endl;
 
+  // limit the crops we evaluate to those overlapping the CROI
+  _infill_limit_crops_to_croi = p.get<bool>("SparseInfillOnlyCROI");
+
   // -------------------------------
   // SPARSE SSNET
   // -------------------------------
@@ -763,7 +768,7 @@ void DLInterface::produce(art::Event & e)
       break;
     case kPyTorchCPU:
       infill_status = runInfill_cpu( e.id().run(), e.id().subRun(), e.id().event(),
-				     infill_crop_vv, infill_netout_vv  );
+				     croi_v, infill_crop_vv, infill_netout_vv  );
       break;
     case kDoNotRun:
     case kDummyServer:
@@ -2263,6 +2268,8 @@ int DLInterface::runInfillServer( const int run, const int subrun, const int eve
   bool debug  = ( _verbosity==0 ) ? true : false;
   LARCV_INFO() << "Run Infill Server" << std::endl;
 
+
+  // whole image processing
   _infill_server->processSparseCroppedInfillViaServer( adc_crops_vv,
 						       run, subrun, event, 
 						       results_vv, 
@@ -2286,17 +2293,65 @@ int DLInterface::runInfillServer( const int run, const int subrun, const int eve
  * @param[in] threshold ADC pixel threshold used by infill machinery.
  */
 int DLInterface::runInfill_cpu( const int run, const int subrun, const int event, 
+				const std::vector< larcv::ROI >& croi_v,				
 				std::vector<std::vector<larcv::SparseImage> >& adc_crops_vv,
 				std::vector<std::vector<larcv::SparseImage> >& results_vv ) {
   
   bool debug  = ( _verbosity==0 ) ? true : false;
+  LARCV_INFO() << "Run runInfill_cpu" << std::endl;
+
+  std::vector< std::vector<int> > used_vv; // leave empty to indicate all crops to be run
+  used_vv.clear();
+
+  if ( _infill_limit_crops_to_croi ) {
+    
+    used_vv.resize( adc_crops_vv.size() );
+
+    for ( size_t p=0; p<adc_crops_vv.size(); p++ ) {
+
+      auto& sparse_input_v = adc_crops_vv[p];
+      std::vector<int>& used_v = used_vv[p];
+      used_v.resize( sparse_input_v.size(), 0 );
+
+      for ( size_t iimg=0; iimg<sparse_input_v.size(); iimg++ ) {
+	auto& sparseimg = sparse_input_v[iimg];
+	auto& sparsemeta = sparseimg.meta(0);
+
+	double pt[4][2] = { {sparsemeta.min_x(), sparsemeta.min_y()},
+			    {sparsemeta.min_x(), sparsemeta.max_y()},
+			    {sparsemeta.max_x(), sparsemeta.min_y()},
+			    {sparsemeta.max_x(), sparsemeta.max_y()} };
+	
+	// test against the crois
+	bool contains = false;
+	for ( auto const& croi : croi_v ) {
+	  // test if any of the four corners of the meta is in the croi's meta
+	  for (int i=0; i<4; i++ ) {
+	    if ( croi.BB(p).contains( (float)pt[i][0], (float)pt[i][1] ) ) {
+	      contains = true;
+	      break;
+	    }
+	  }
+	  if ( contains )
+	    break;
+	}//end of croi loop
+	
+	if ( contains )
+	  used_v[iimg] = 1;
+	
+      }//end of split image loop
+
+      
+    }// end of plane loop
+
+  }//end of limit to croi option
 
   _sparseinfill_script->run_sparse_cropped_infill( adc_crops_vv,
 						   run, subrun, event,
+						   used_vv,
 						   results_vv,
 						   debug );
 
-  
   return 0;
 }
   
@@ -2376,13 +2431,15 @@ int DLInterface::runSparseSSNet_cpu( const int run, const int subrun, const int 
   
   bool debug  = ( _verbosity==0 ) ? true : false;
 
+
+  // whole image processing
   _sparsessnet_script->run_sparse_ssnet( sparse_input_vv,
-					 run, subrun, event
-,					 sparse_input_vv.front().front().meta(0).rows(),
+					 run, subrun, event,
+					 sparse_input_vv.front().front().meta(0).rows(),
 					 sparse_input_vv.front().front().meta(0).cols(),
 					 results_vv,
 					 debug );
-  
+
   return 0;
 }
 

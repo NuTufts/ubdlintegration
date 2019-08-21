@@ -52,9 +52,9 @@ DLInterface: {
                              "sparseinfill_vplane_test.tar",
                              "sparseinfill_yplane_test.tar"]
 
-  SparseSSNet_WeightFiles: ["/uboone/data/users/tmw/dl_model_files/Plane0Weights-13999.ckpt",
-                            "/uboone/data/users/tmw/dl_model_files/Plane1Weights-17999.ckpt",
-                            "/uboone/data/users/tmw/dl_model_files/Plane2Weights-26999.ckpt"]
+  SparseSSNet_WeightFiles: ["sparse_uresnet_v0_plane0_weights-13999.ckpt",
+                            "sparse_uresnet_v0_plane1_weights-17999.ckpt",
+                            "sparse_uresnet_v0_plane2_weights-26999.ckpt"]
 
 
 }

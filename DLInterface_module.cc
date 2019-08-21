@@ -514,7 +514,17 @@ DLInterface::DLInterface(fhicl::ParameterSet const & p)
   // SPARSE SSNET
   // -------------------------------
   if ( *mode_v[kSparseSSNET] == kPyTorchCPU ) {
-    _sparsessnet_weight_file_v = p.get<std::vector<std::string> >("SparseSSNet_WeightFiles");
+    std::vector<std::string> sparsessnet_weight_v = p.get<std::vector<std::string> >("SparseSSNet_WeightFiles");
+    _sparsessnet_weight_file_v.clear();
+    for ( auto const& sparsessnet_weight : sparsessnet_weight_v ) {
+      cet::search_path sparse_ssnet_finder("UBSSNET_WEIGHT_DIR");
+      std::string weight_fullpath;
+      if (!sparse_ssnet_finder.find_file( sparsessnet_weight, weight_fullpath ) ) {
+	throw cet::exception("DLInterface")
+	  << "Unable to find Sparse SSNet weight file: " << weight_fullpath << std::endl;
+      }      
+      _sparsessnet_weight_file_v.push_back( weight_fullpath );
+    }
   }
   else {
     if ( ! *mode_v[kSparseSSNET]==kDoNotRun ) {

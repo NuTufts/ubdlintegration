@@ -437,6 +437,19 @@ DLInterface::DLInterface(fhicl::ParameterSet const & p)
     _make_wholeimg_crops = true;
   }
 
+  // network description and weights
+  std::vector<std::string> mcc8_ssnet_script = p.get< std::vector<std::string> >("MCC8SSNetScript");
+  _mcc8_ssnet_script.clear();
+  for ( auto const& ssnet_script : mcc8_ssnet_script ) {
+    cet::search_path script_finder("UBSSNET_WEIGHT_DIR");
+    std::string script_fullpath;
+    if( !script_finder.find_file(ssnet_script,script_fullpath)) {
+      throw cet::exception("DLInterface")
+	<< "Unable to find MCC8 dense SSNet torchscript file: " << ssnet_script << std::endl;
+    }
+    _mcc8_ssnet_script.push_back( script_fullpath );
+  }
+
   // -------------------------------
   // LARFLOW
   // -------------------------------
@@ -495,7 +508,17 @@ DLInterface::DLInterface(fhicl::ParameterSet const & p)
   // INFILL
   // -------------------------------
   if ( *mode_v[kINFILL] == kPyTorchCPU ) {
-    _sparseinfill_weight_file_v = p.get<std::vector<std::string> >("SparseInfill_WeightFiles");
+    std::vector<std::string> sparseinfill_weight_v = p.get<std::vector<std::string> >("SparseInfill_WeightFiles");
+    _sparseinfill_weight_file_v.clear();
+    for ( auto const& sparseinfill_weight : sparseinfill_weight_v ) {
+      cet::search_path sparseinfill_finder("UBINFILLNET_WEIGHT_DIR");
+      std::string sparseinfill_weight_fullpath;
+      if ( !sparseinfill_finder.find_file( sparseinfill_weight, sparseinfill_weight_fullpath ) ) {
+	throw cet::exception("DLInterface")
+	  << "Unable to find UB Infill Network weight file: " << sparseinfill_weight << std::endl;
+      }
+      _sparseinfill_weight_file_v.push_back( sparseinfill_weight_fullpath );
+    }
   }
   
   // ubsplitter config: for infill
@@ -562,9 +585,6 @@ DLInterface::DLInterface(fhicl::ParameterSet const & p)
 
   // configure image splitter (fullimage into detsplit image)
   _imagesplitter.configure( split_cfg );
-
-  // get the path to the saved ssnet
-  _mcc8_ssnet_script = p.get< std::vector<std::string> >("MCC8SSNetScript");
 
   // configuration for art product output
   _pixelthresholds_forsavedscores = p.get< std::vector<float> >("PixelThresholdsForSavedScoresPerPlane");
@@ -2454,17 +2474,9 @@ void DLInterface::loadNetwork_PyTorchCPU() {
   for ( size_t iscript=0; iscript<_mcc8_ssnet_script.size(); iscript++ ) {
     std::cout << "Loading network[" << iscript << "] from " 
 	      << _mcc8_ssnet_script[iscript] << " .... " << std::endl;
-    
-    std::string scriptpath;
-    cet::search_path finder("FHICL_FILE_PATH");
-    if( !finder.find_file(_mcc8_ssnet_script[iscript], scriptpath) )
-      throw cet::exception("DLInterface") << "Unable to find torch script in "  << finder.to_string() << "\n";
-    std::cout << "LOADING pytorch model data: " << scriptpath << std::endl;
-
-    _module_ubssnet.push_back( torch::jit::load( scriptpath ) );
-
+    _module_ubssnet.push_back( torch::jit::load( _mcc8_ssnet_script[iscript] ) );
   }
-  std::cout << "Networks Loaded" << std::endl;
+  std::cout << "MCC8 Dense SSNet Networks Loaded" << std::endl;
 #endif
 }
 

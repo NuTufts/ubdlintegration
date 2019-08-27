@@ -52,7 +52,7 @@ def forwardpass( plane, nrows, ncols, sparse_bson_list, weights_filepath ):
              "report_step":1,           # -rs
              "spatial_size":512,        # -ss
              "data_dim":2,              # -dd
-             "uresnet_num_strides": 5,  # -uns
+             "uresnet_num_strides": 6,  # -uns
              "data_keys":"wire,label",  # -dkeys
              "model_name":"uresnet_sparse", # -mn
              "iteration":1,            # -it

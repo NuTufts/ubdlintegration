@@ -21,7 +21,7 @@ DLInterface: {
   SaveDetsplitImagesInput:     false
   SaveNetOutSplitImagesOutput: false
 
-  SSNetMode:           "DoNotRun"
+  SSNetMode:           "PyTorchCPU"
   LArFlowMode:         "DoNotRun"
   InfillMode:          "PyTorchCPU"
   CosmicMRCNNMode:     "PyTorchCPU"
@@ -88,6 +88,8 @@ services.DetectorClocksService.InheritClockConfig:    false
 services.DetectorClocksService.TriggerOffsetTPC:      -0.400e3
 services.SpaceCharge.EnableSimSpatialSCE: true
 services.SpaceCharge.EnableSimEfieldSCE:  true
+services.LLMetaMaker: {Enable: false}
+services.LArCVMetaMaker: {Enable: false}
 
 #services.FileCatalogMetadata.applicationVersion: "develop"
 #services.FileCatalogMetadata.fileType: "mc"
@@ -125,13 +127,21 @@ physics:
 
  filters: {}
 
- analyzers: {}
+ analyzers: {
+   @table::dlprod_analyzers
+ }
 
  dlnetpath: [ubdl]
- stream: [out1]
+ stream: [opreco, reco2d, out1]
  end_paths: [stream]
  trigger_paths: [ dlnetpath ]
 }
+
+# configure larlite
+# DATA
+#physics.analyzers.opreco.trigger: ["daq"]
+# MC
+physics.analyzers.opreco.trigger: ["triggersim"]
 
 outputs:
 {

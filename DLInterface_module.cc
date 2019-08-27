@@ -2435,7 +2435,8 @@ int DLInterface::runSparseSSNet_cpu( const int run, const int subrun, const int 
   // whole image processing
   _sparsessnet_script->run_sparse_ssnet( sparse_input_vv,
 					 run, subrun, event,
-					 sparse_input_vv.front().front().meta(0).rows(),
+					 //sparse_input_vv.front().front().meta(0).rows(),
+					 1024,
 					 sparse_input_vv.front().front().meta(0).cols(),
 					 results_vv,
 					 debug );

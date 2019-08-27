@@ -17,7 +17,7 @@ DLInterface: {
   DoFlashROICrop:      true
   OpFlashProducerName: "simpleFlashBeam"
   SSNetCropMethod:     "FlashCROI"
-  UBCropConfig:        "ubcrop.cfg"
+  UBCropConfig:        "ubcrop.fcl"
   SaveDetsplitImagesInput:     false
   SaveNetOutSplitImagesOutput: false
 
@@ -51,11 +51,11 @@ DLInterface: {
                              "sparseinfill_vplane_test.tar",
                              "sparseinfill_yplane_test.tar"]
   SparseInfillOnlyCROI: true
-  InfillCropConfig:     "infill_split.cfg"
+  InfillCropConfig:     "infill_split.fcl"
 
-  SparseSSNet_WeightFiles: ["sparse_uresnet_v0_plane0_weights-13999.ckpt",
-                            "sparse_uresnet_v0_plane1_weights-17999.ckpt",
-                            "sparse_uresnet_v0_plane2_weights-26999.ckpt"]
+  SparseSSNet_WeightFiles: ["sparse_uresnet_plane0_16filter_6layers_22999.ckpt",
+                            "sparse_uresnet_plane1_16filter_6layers_31999.ckpt",
+                            "sparse_uresnet_plane2_16filter_6layers_36999.ckpt"]
 
 
 }
@@ -88,6 +88,8 @@ services.DetectorClocksService.InheritClockConfig:    false
 services.DetectorClocksService.TriggerOffsetTPC:      -0.400e3
 services.SpaceCharge.EnableSimSpatialSCE: true
 services.SpaceCharge.EnableSimEfieldSCE:  true
+services.LLMetaMaker: {Enable: false}
+services.LArCVMetaMaker: {Enable: false}
 
 #services.FileCatalogMetadata.applicationVersion: "develop"
 #services.FileCatalogMetadata.fileType: "mc"
@@ -125,13 +127,21 @@ physics:
 
  filters: {}
 
- analyzers: {}
+ analyzers: {
+   @table::dlprod_analyzers
+ }
 
  dlnetpath: [ubdl]
- stream: [out1]
+ stream: [opreco, reco2d, out1]
  end_paths: [stream]
  trigger_paths: [ dlnetpath ]
 }
+
+# configure larlite
+# DATA
+#physics.analyzers.opreco.trigger: ["daq"]
+# MC
+physics.analyzers.opreco.trigger: ["triggersim"]
 
 outputs:
 {

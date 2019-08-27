@@ -115,7 +115,6 @@ cat /proc/cpuinfo
 #ifdh cp /pnfs/uboone/resilient/users/tmw/model_data/sparse_uresnet_mcc9/Plane1Weights-17999.ckpt Plane1Weights-17999.ckpt
 #ifdh cp /pnfs/uboone/resilient/users/tmw/model_data/sparse_uresnet_mcc9/Plane2Weights-26999.ckpt Plane2Weights-26999.ckpt
 
-
 ls -lh
 
 echo "<< END OF INIT-SOURCE-SCRIPT >>"

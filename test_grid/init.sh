@@ -79,7 +79,7 @@ python -c "import inference_sparse_ssnet"
 #python -c "from larcv import larcv; larcv.json.load_jsonutils(); print \"larcv.json.load_jsonutils()\""
 
 echo "<<<< cpu INFO >>>>>"
-cat /proc/cpuinfo
+#cat /proc/cpuinfo
 
 #echo "<<<<< copy inference test data >>>>>"
 #ifdh cp /pnfs/uboone/resilient/users/tmw/model_deploy_scripts/supera-Run005121-SubRun000004.root supera-Run005121-SubRun000004.root
@@ -115,7 +115,10 @@ cat /proc/cpuinfo
 #ifdh cp /pnfs/uboone/resilient/users/tmw/model_data/sparse_uresnet_mcc9/Plane1Weights-17999.ckpt Plane1Weights-17999.ckpt
 #ifdh cp /pnfs/uboone/resilient/users/tmw/model_data/sparse_uresnet_mcc9/Plane2Weights-26999.ckpt Plane2Weights-26999.ckpt
 
-ls -lh
+#ls -lh
+
+#ifdh cp /pnfs/uboone/resilient/users/tmw/fcls/tagger_overlay_v2_splity.cfg tagger_overlay_v2_splity.cfg
+#ifdh cp /pnfs/uboone/resilient/users/tmw/fcls/prod_fullchain_mcc9ssnet_combined_newtag_extbnb_c10_union.cfg prod_fullchain_mcc9ssnet_combined_newtag_extbnb_c10_union.cfg
 
 echo "<< END OF INIT-SOURCE-SCRIPT >>"
 #exit 0

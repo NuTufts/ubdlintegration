@@ -26,6 +26,7 @@ namespace ubdlintegration {
 
     int run_sparse_cropped_infill( const std::vector< std::vector<larcv::SparseImage> >& cropped_vv, 
 				   const int run, const int subrun, const int event,
+				   const std::vector< std::vector<int> >& use_vv,
 				   std::vector<std::vector<larcv::SparseImage> >& results_vv,
 				   bool debug );
 

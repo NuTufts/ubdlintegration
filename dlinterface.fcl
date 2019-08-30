@@ -1,0 +1,61 @@
+BEGIN_PROLOG
+
+DLInterface: {
+  module_type:         "DLInterface"
+  Verbosity:           0
+  WireProducerName:    "butcher"
+  OutputProducerName:  "ssnet"
+  larliteOutputFile:   "larlite_larflow.root"
+
+  SuperaConfigFile:    "supera_ssnetinterface.fcl"
+  PixelThresholdsForSavedScoresPerPlane: [10.0,10.0,10.0]
+  DoWholeImageCrop:    true
+  DoFlashROICrop:      true
+  OpFlashProducerName: "simpleFlashBeam"
+  SSNetCropMethod:     "FlashCROI"
+  UBCropConfig:        "ubcrop.fcl"
+  SaveDetsplitImagesInput:     false
+  SaveNetOutSplitImagesOutput: false
+
+  SSNetMode:           "DoNotRun"
+  LArFlowMode:         "DoNotRun"
+  InfillMode:          "PyTorchCPU"
+  CosmicMRCNNMode:     "PyTorchCPU"
+  SparseSSNetMode:     "PyTorchCPU"
+
+  ServerConfiguration: {
+    BrokerAddress: "tcp://nudot.lns.mit.edu"
+    BrokerPort: "6000"
+    RequestTimeoutSecs: 300
+    RequestMaxTries: 3
+    MaxBrokerReconnects: 3
+  }
+    
+  MCC8SSNetScript: ["mcc8_caffe_ubssnet_plane0.pytorchscript",
+                    "mcc8_caffe_ubssnet_plane1.pytorchscript",
+                    "mcc8_caffe_ubssnet_plane2.pytorchscript"]
+
+  CosmicMRCNN_WeightFiles: ["mcc8_mrcnn_plane0_weightsonly.pt",
+                            "mcc8_mrcnn_plane1_weightsonly.pt",
+                            "mcc8_mrcnn_plane2_weightsonly.pt"]
+
+  CosmicMRCNN_ConfigFiles: ["mills_config_0.yaml",
+                            "mills_config_1.yaml",
+                            "mills_config_2.yaml"]
+
+  SparseInfill_WeightFiles: ["sparseinfill_uplane_test.tar",
+                             "sparseinfill_vplane_test.tar",
+                             "sparseinfill_yplane_test.tar"]
+  SparseInfillOnlyCROI: true
+  InfillCropConfig:     "infill_split.fcl"
+
+  SparseSSNet_WeightFiles: ["sparse_uresnet_plane0_16filter_6layers_22999.ckpt",
+                            "sparse_uresnet_plane1_16filter_6layers_31999.ckpt",
+                            "sparse_uresnet_plane2_16filter_6layers_36999.ckpt"]
+
+
+}
+
+UBDLIntegration: @local::DLInterface
+
+END_PROLOG

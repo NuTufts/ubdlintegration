@@ -190,12 +190,13 @@ if __name__ == "__main__":
     io.add_in_file( supera_file )
     io.initialize()
 
+    weight_dir = "/cvmfs/uboone.opensciencegrid.org/products/ubInfillNet/v1_0_0/NULL/weights/"
     weights = [ "sparseinfill_uplane_test.tar", 
                 "sparseinfill_vplane_test.tar",
                 "sparseinfill_yplane_test.tar" ]
 
     # splitter
-    cfg = "../infill_split.cfg"
+    cfg = "infill_split.cfg"
 
     pset = larcv.CreatePSetFromFile( cfg, "UBSplitDetector" )
     print(pset.dump())
@@ -257,7 +258,7 @@ if __name__ == "__main__":
                 
         print("Run nets")
         for p in [0,1,2]:
-            out_v = forwardpass( sparse_v[p], weights[p] )
+            out_v = forwardpass( sparse_v[p], weight_dir+"/"+weights[p] )
             print("plane {} returned with {} outputs".format(p,len(out_v)))
                   
         break

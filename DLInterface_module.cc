@@ -141,6 +141,7 @@ private:
   ublarcvapp::ubdllee::FixedCROIFromFlashAlgo _croifromflashalgo; //< croi from flash
   std::string _ubcrop_trueflow_cfg; //< config for the ssnet/larflow splitting and cropping algorithm
   std::string _infill_split_cfg;    //< config for the infill splitting and cropping algorithm
+  bool        _infill_limit_crops_to_croi; //< if true, limit crops to evaluate to be within the croi
   bool        _save_detsplit_input;
   bool        _save_detsplit_output;
   std::string _opflash_producer_name;
@@ -163,7 +164,7 @@ private:
   bool _connect_to_server;
 
   // interface: pytorch cpu
-  std::vector<std::string> _pytorch_net_script; // one for each plane
+  std::vector<std::string> _mcc8_ssnet_script; // one for each plane
 #ifdef HAS_TORCH
   std::vector< std::shared_ptr<torch::jit::script::Module> > _module_ubssnet;  //< pointer to pytorch network
 #endif
@@ -239,6 +240,7 @@ private:
 		       const float threshold );
   // interface: infill cpu
   int runInfill_cpu( const int run, const int subrun, const int event, 
+		     const std::vector<larcv::ROI>& croi_v,
 		     std::vector<std::vector<larcv::SparseImage> >& adc_crops_vv,
 		     std::vector<std::vector<larcv::SparseImage> >& results_vv );
   
@@ -321,6 +323,10 @@ private:
 
   void saveSparseSSNetArtProducts( art::Event& ev, 
 				   const std::vector<std::vector<larcv::SparseImage> >& sparse_ssnet_out_vv );
+
+  void saveSparseSSNetLArCVProducts( larcv::IOManager& io, 
+				     const std::vector<larcv::Image2D>& wholeview_v,
+				     std::vector<std::vector<larcv::SparseImage> >& sparse_ssnet_out_vv );
 
 };
 
@@ -433,6 +439,19 @@ DLInterface::DLInterface(fhicl::ParameterSet const & p)
     _make_wholeimg_crops = true;
   }
 
+  // network description and weights
+  std::vector<std::string> mcc8_ssnet_script = p.get< std::vector<std::string> >("MCC8SSNetScript");
+  _mcc8_ssnet_script.clear();
+  for ( auto const& ssnet_script : mcc8_ssnet_script ) {
+    cet::search_path script_finder("UBSSNET_WEIGHT_DIR");
+    std::string script_fullpath;
+    if( !script_finder.find_file(ssnet_script,script_fullpath)) {
+      throw cet::exception("DLInterface")
+	<< "Unable to find MCC8 dense SSNet torchscript file: " << ssnet_script << std::endl;
+    }
+    _mcc8_ssnet_script.push_back( script_fullpath );
+  }
+
   // -------------------------------
   // LARFLOW
   // -------------------------------
@@ -462,15 +481,46 @@ DLInterface::DLInterface(fhicl::ParameterSet const & p)
   // UB-MRCNN
   // -------------------------------
   if ( *mode_v[kUBMRCNN] == kPyTorchCPU ) {
-    _ubmrcnn_weight_file_v = p.get<std::vector<std::string> >("CosmicMRCNN_WeightFiles");
-    _ubmrcnn_config_file_v = p.get<std::vector<std::string> >("CosmicMRCNN_ConfigFiles");
+    // weight files
+    std::vector<std::string> ubmrcnn_weight_v = p.get<std::vector<std::string> >("CosmicMRCNN_WeightFiles");
+    for ( auto& weightfile : ubmrcnn_weight_v ) {
+      cet::search_path ubmrcnn_weight_finder("FHICL_FILE_PATH");
+      std::string weight_fullpath;
+      if (!ubmrcnn_weight_finder.find_file( weightfile, weight_fullpath ) ) {
+	throw cet::exception("DLInterface")
+	  << "Unable to find ubMaskRCNN weight file: " << weightfile << std::endl;
+      }
+      _ubmrcnn_weight_file_v.push_back( weight_fullpath );
+    }
+    // config files
+    std::vector<std::string> ubmrcnn_config_v = p.get<std::vector<std::string> >("CosmicMRCNN_ConfigFiles");
+    for ( auto& configfile : ubmrcnn_config_v ) {
+      cet::search_path ubmrcnn_config_finder("FHICL_FILE_PATH");
+      std::string config_fullpath;
+      if (!ubmrcnn_config_finder.find_file( configfile, config_fullpath ) ) {
+	throw cet::exception("DLInterface")
+	  << "Unable to find ubMaskRCNN config file: " << configfile << std::endl;
+      }
+      _ubmrcnn_config_file_v.push_back( config_fullpath );
+    }
+
   }
 
   // -------------------------------
   // INFILL
   // -------------------------------
   if ( *mode_v[kINFILL] == kPyTorchCPU ) {
-    _sparseinfill_weight_file_v = p.get<std::vector<std::string> >("SparseInfill_WeightFiles");
+    std::vector<std::string> sparseinfill_weight_v = p.get<std::vector<std::string> >("SparseInfill_WeightFiles");
+    _sparseinfill_weight_file_v.clear();
+    for ( auto const& sparseinfill_weight : sparseinfill_weight_v ) {
+      cet::search_path sparseinfill_finder("UBINFILLNET_WEIGHT_DIR");
+      std::string sparseinfill_weight_fullpath;
+      if ( !sparseinfill_finder.find_file( sparseinfill_weight, sparseinfill_weight_fullpath ) ) {
+	throw cet::exception("DLInterface")
+	  << "Unable to find UB Infill Network weight file: " << sparseinfill_weight << std::endl;
+      }
+      _sparseinfill_weight_file_v.push_back( sparseinfill_weight_fullpath );
+    }
   }
   
   // ubsplitter config: for infill
@@ -485,15 +535,30 @@ DLInterface::DLInterface(fhicl::ParameterSet const & p)
   else
     LARCV_DEBUG() << "UBSplitDetector(infill) config path: " << _infill_split_cfg << std::endl;
 
+  // limit the crops we evaluate to those overlapping the CROI
+  _infill_limit_crops_to_croi = p.get<bool>("SparseInfillOnlyCROI");
+
   // -------------------------------
   // SPARSE SSNET
   // -------------------------------
   if ( *mode_v[kSparseSSNET] == kPyTorchCPU ) {
-    _sparsessnet_weight_file_v = p.get<std::vector<std::string> >("SparseSSNet_WeightFiles");
+    std::vector<std::string> sparsessnet_weight_v = p.get<std::vector<std::string> >("SparseSSNet_WeightFiles");
+    _sparsessnet_weight_file_v.clear();
+    for ( auto const& sparsessnet_weight : sparsessnet_weight_v ) {
+      cet::search_path sparse_ssnet_finder("UBSSNET_WEIGHT_DIR");
+      std::string weight_fullpath;
+      if (!sparse_ssnet_finder.find_file( sparsessnet_weight, weight_fullpath ) ) {
+	throw cet::exception("DLInterface")
+	  << "Unable to find Sparse SSNet weight file: " << weight_fullpath << std::endl;
+      }      
+      _sparsessnet_weight_file_v.push_back( weight_fullpath );
+    }
   }
   else {
-    throw cet::exception("DLInterface")
-      << "unsupported interface for SparseSSNET model: " << *mode_v[kSparseSSNET] << std::endl;
+    if ( ! *mode_v[kSparseSSNET]==kDoNotRun ) {
+      throw cet::exception("DLInterface")
+	<< "unsupported interface for SparseSSNET model: " << *mode_v[kSparseSSNET] << std::endl;
+    }
   }
 
   // =================================
@@ -525,9 +590,6 @@ DLInterface::DLInterface(fhicl::ParameterSet const & p)
 
   // configure image splitter (fullimage into detsplit image)
   _imagesplitter.configure( split_cfg );
-
-  // get the path to the saved ssnet
-  _pytorch_net_script = p.get< std::vector<std::string> >("PyTorchNetScript");
 
   // configuration for art product output
   _pixelthresholds_forsavedscores = p.get< std::vector<float> >("PixelThresholdsForSavedScoresPerPlane");
@@ -706,7 +768,7 @@ void DLInterface::produce(art::Event & e)
       break;
     case kPyTorchCPU:
       infill_status = runInfill_cpu( e.id().run(), e.id().subRun(), e.id().event(),
-				     infill_crop_vv, infill_netout_vv  );
+				     croi_v, infill_crop_vv, infill_netout_vv  );
       break;
     case kDoNotRun:
     case kDummyServer:
@@ -785,25 +847,27 @@ void DLInterface::produce(art::Event & e)
     std::vector<float> sparse_ssnet_thresh(1,10.0);
     for ( size_t p=0; p<wholeview_v.size(); p++ ) {
       std::vector<const larcv::Image2D*> pimg_v;
+      pimg_v.push_back( &wholeview_v.at(p) );
       larcv::SparseImage spimg( pimg_v, sparse_ssnet_thresh );
       std::vector<larcv::SparseImage> spimg_v;
       spimg_v.emplace_back( std::move(spimg) );
       sparse_ssnet_input_vv.emplace_back( std::move(spimg_v) );
     }
 
-    switch (_infill_mode) {
+    switch (_sparse_ssnet_mode) {
+    case kDoNotRun:
+      break;
     case kPyTorchCPU:
-      infill_status = runSparseSSNet_cpu( e.id().run(), e.id().subRun(), e.id().event(),
-					  sparse_ssnet_input_vv, sparse_ssnet_netout_vv );
+      sparse_ssnet_status = runSparseSSNet_cpu( e.id().run(), e.id().subRun(), e.id().event(),
+						sparse_ssnet_input_vv, sparse_ssnet_netout_vv );
       break;
     case kServer:
-    case kDoNotRun:
     case kDummyServer:
     case kTensorFlowCPU:
     default:
       throw cet::exception("DLInterface") 
 	<< "Attempting to run sparse ssnet network in unimplemented mode "
-	<< "(" << _infill_mode << ")." << std::endl;      
+	<< "(" << _sparse_ssnet_mode << ")." << std::endl;      
       break;
     }
     if ( sparse_ssnet_status!= 0 ) {
@@ -811,7 +875,7 @@ void DLInterface::produce(art::Event & e)
 	<< "Error running Sparse SSNet Network" << std::endl;
     }
   }
-
+  
   // clear infill crops: not needed unless for debug downstream
   saveSparseSSNetArtProducts( e, sparse_ssnet_netout_vv );
 
@@ -828,17 +892,6 @@ void DLInterface::produce(art::Event & e)
   larcv::IOManager& io = _supera.driver().io_mutable();
   io.set_verbosity( larcv::msg::kDEBUG );
 
-  // save the wholeview images back to the supera IO
-  larcv::EventImage2D* ev_imgs  = (larcv::EventImage2D*) io.get_data( larcv::kProductImage2D, "wire" );
-  //std::cout << "wire eventimage2d=" << ev_imgs << std::endl;
-  ev_imgs->Emplace( std::move(wholeview_v) );
-
-  // save detsplit input
-  larcv::EventImage2D* ev_splitdet = nullptr;
-  if ( _save_detsplit_input ) {
-    ev_splitdet = (larcv::EventImage2D*) io.get_data( larcv::kProductImage2D, "detsplit" );
-    ev_splitdet->Emplace( std::move(splitimg_v) );
-  }
 
   // ssnet
   // -------
@@ -892,6 +945,23 @@ void DLInterface::produce(art::Event & e)
   
   // sparse ssnet
   // --------------
+  saveSparseSSNetLArCVProducts( _supera.driver().io_mutable(), wholeview_v, sparse_ssnet_netout_vv );
+
+  // INUT IMAGES: wholeview and split
+  // ---------------------------------
+  // saved last as some functions above require them
+
+  // save the wholeview images back to the supera IO
+  larcv::EventImage2D* ev_imgs  = (larcv::EventImage2D*) io.get_data( larcv::kProductImage2D, "wire" );
+  //std::cout << "wire eventimage2d=" << ev_imgs << std::endl;
+  ev_imgs->Emplace( std::move(wholeview_v) );
+
+  // save detsplit input
+  larcv::EventImage2D* ev_splitdet = nullptr;
+  if ( _save_detsplit_input ) {
+    ev_splitdet = (larcv::EventImage2D*) io.get_data( larcv::kProductImage2D, "detsplit" );
+    ev_splitdet->Emplace( std::move(splitimg_v) );
+  }
 
   // ------------------
   // save entry: larcv
@@ -981,24 +1051,24 @@ int DLInterface::runSupera( art::Event& e,
     try {
       *ev_chstatus = (larcv::EventChStatus*) _supera.driver().io_mutable().get_data( larcv::kProductChStatus, "wire" );
 
-      if ( _verbosity==larcv::msg::kDEBUG ) {
-	LARCV_DEBUG() << "======================================" << std::endl;
-	LARCV_DEBUG() << " CHECK CHSTATUS INFO" << std::endl;
-	size_t nwires[3] = { 2400, 2400, 3456 };
-	for ( size_t p=0; p<wholeview_imgs.size(); p++ ) {
-	  LARCV_DEBUG() << " [plane " << p << "] --------- " << std::endl;
-	  int nbad = 0;
-	  auto& chstatus = (*ev_chstatus)->Status((larcv::PlaneID_t)p);
-	  for (size_t w=0; w<nwires[p]; w++ ) {
-	    if ( chstatus.Status(w)!=4 ) {
-	      LARCV_DEBUG() << "  bad wire: " << w << std::endl;
-	      nbad++;
-	    }
-	  }
-	  LARCV_DEBUG() << " plane nbad wires: " << nbad << std::endl;
-	}
-	LARCV_DEBUG() << "======================================" << std::endl;
-      }
+      // if ( _verbosity==larcv::msg::kDEBUG ) {
+      // 	LARCV_DEBUG() << "======================================" << std::endl;
+      // 	LARCV_DEBUG() << " CHECK CHSTATUS INFO" << std::endl;
+      // 	size_t nwires[3] = { 2400, 2400, 3456 };
+      // 	for ( size_t p=0; p<wholeview_imgs.size(); p++ ) {
+      // 	  LARCV_DEBUG() << " [plane " << p << "] --------- " << std::endl;
+      // 	  int nbad = 0;
+      // 	  auto& chstatus = (*ev_chstatus)->Status((larcv::PlaneID_t)p);
+      // 	  for (size_t w=0; w<nwires[p]; w++ ) {
+      // 	    if ( chstatus.Status(w)!=4 ) {
+      // 	      LARCV_DEBUG() << "  bad wire: " << w << std::endl;
+      // 	      nbad++;
+      // 	    }
+      // 	  }
+      // 	  LARCV_DEBUG() << " plane nbad wires: " << nbad << std::endl;
+      // 	}
+      // 	LARCV_DEBUG() << "======================================" << std::endl;
+      // }
     }
     catch (std::exception& e ) {
       std::stringstream errout;
@@ -2008,7 +2078,6 @@ void DLInterface::saveCosmicMRCNNArtProducts( art::Event& ev,
  * @param[inout] ev art Event container we will add results to
  * @param[in] sparse_ssnet_out_vv a vector of sparse images for each plane
  */
-
 void DLInterface::saveSparseSSNetArtProducts( art::Event& ev, 
 					      const std::vector<std::vector<larcv::SparseImage> >& sparse_ssnet_out_vv ) {
 
@@ -2024,6 +2093,108 @@ void DLInterface::saveSparseSSNetArtProducts( art::Event& ev,
   
   // fill empty
   ev.put( std::move(sparse_ssnet_v), "sparsessnet" );
+  return;
+
+}
+
+/**
+ * create larcv objects for SparseSSNet
+ *
+ * @param[inout] ev art Event container we will add results to
+ * @param[in] sparse_ssnet_out_vv a vector of sparse images for each plane
+ */
+void DLInterface::saveSparseSSNetLArCVProducts( larcv::IOManager& io,
+						const std::vector<larcv::Image2D>& wholeview_v,
+						std::vector<std::vector<larcv::SparseImage> >& sparse_ssnet_out_vv ) {
+
+  LARCV_INFO() << "saving Sparse SSNet Products into LArCV event" << std::endl;
+  if ( sparse_ssnet_out_vv.size()==0 )
+    sparse_ssnet_out_vv.resize(3);
+  
+  larcv::EventImage2D* uburn[3] = {nullptr,nullptr,nullptr};
+  uburn[0] = (larcv::EventImage2D*)io.get_data(larcv::kProductImage2D, "ubspurn_plane0");
+  uburn[1] = (larcv::EventImage2D*)io.get_data(larcv::kProductImage2D, "ubspurn_plane1");
+  uburn[2] = (larcv::EventImage2D*)io.get_data(larcv::kProductImage2D, "ubspurn_plane2");
+
+  larcv::EventImage2D* ev_prediction = (larcv::EventImage2D*)io.get_data(larcv::kProductImage2D, "sparseuresnet_prediction" );
+
+  // we also the sparse data from the network to make shower and track score images
+  for ( size_t p=0; p<3; p++ ) {
+    larcv::Image2D shower(wholeview_v.at(p).meta());
+    larcv::Image2D track( wholeview_v.at(p).meta());
+    larcv::Image2D pred(  wholeview_v.at(p).meta());
+    shower.paint(0);
+    track.paint(0);
+    pred.paint(0);
+
+    const larcv::ImageMeta& meta = wholeview_v.at(p).meta();
+    auto& sparse_v = sparse_ssnet_out_vv.at(p);
+
+    for ( auto& spimg : sparse_v ) {
+      int nfeatures = spimg.nfeatures();
+      int stride = nfeatures+2;
+      int npts = spimg.pixellist().size()/stride;
+      auto const& spmeta = spimg.meta(0);
+
+      for (int ipt=0; ipt<npts; ipt++) {
+	int row = spimg.pixellist().at( ipt*stride+0 );
+	int col = spimg.pixellist().at( ipt*stride+1 );
+
+	int xrow = meta.row( spmeta.pos_y( row ) );
+	int xcol = meta.col( spmeta.pos_x( col ) );
+
+	float hip = spimg.pixellist().at( ipt*stride+2 );
+	float mip = spimg.pixellist().at( ipt*stride+3 );
+	float shr = spimg.pixellist().at( ipt*stride+4 );
+	float dlt = spimg.pixellist().at( ipt*stride+5 );
+	float mic = spimg.pixellist().at( ipt*stride+6 );
+
+	float shower_score = shr+dlt+mic;
+	float track_score  = hip+mip;
+
+	shower.set_pixel( xrow, xcol, shower_score );
+	track.set_pixel(  xrow, xcol, track_score );
+	
+	int max_idx = 0;
+	float max_val = -1;
+	for ( int i=0; i<5; i++ ) {
+	  if ( spimg.pixellist().at( ipt*stride+2+i )>max_val ) {
+	    max_idx = i;
+	    max_val = spimg.pixellist().at( ipt*stride+2+i );
+	  }
+	}
+	int pred_idx = 0;
+	if ( max_val<0.5 )  {
+	  pred_idx = 1; // background
+	}
+	else {
+	  if ( max_idx==0 )
+	    pred_idx = 2; // hip
+	  else if( max_idx==1 )
+	    pred_idx = 3; // mip
+	  else
+	    pred_idx  = 4; // shower
+	}
+	pred.set_pixel( xrow, xcol, (float)pred_idx );
+      }//end of loop over points
+    }//loop over sparse images
+
+    uburn[p]->Emplace( std::move(shower) );
+    uburn[p]->Emplace( std::move(track) );
+
+    ev_prediction->Emplace( std::move(pred) );
+
+  }//loop over planes
+
+  // we store the raw sparse images.
+  larcv::EventSparseImage* ev_sparseout = (larcv::EventSparseImage*)io.get_data(larcv::kProductSparseImage, "sparseuresnetout" );
+  for ( size_t p=0; p<3; p++ ) {
+    auto& sparse_v = sparse_ssnet_out_vv.at(p);
+    for ( auto& spimg : sparse_v ) {
+      ev_sparseout->Emplace( std::move(spimg) );
+    }
+  }
+
   return;
 
 }
@@ -2097,6 +2268,8 @@ int DLInterface::runInfillServer( const int run, const int subrun, const int eve
   bool debug  = ( _verbosity==0 ) ? true : false;
   LARCV_INFO() << "Run Infill Server" << std::endl;
 
+
+  // whole image processing
   _infill_server->processSparseCroppedInfillViaServer( adc_crops_vv,
 						       run, subrun, event, 
 						       results_vv, 
@@ -2120,17 +2293,65 @@ int DLInterface::runInfillServer( const int run, const int subrun, const int eve
  * @param[in] threshold ADC pixel threshold used by infill machinery.
  */
 int DLInterface::runInfill_cpu( const int run, const int subrun, const int event, 
+				const std::vector< larcv::ROI >& croi_v,				
 				std::vector<std::vector<larcv::SparseImage> >& adc_crops_vv,
 				std::vector<std::vector<larcv::SparseImage> >& results_vv ) {
   
   bool debug  = ( _verbosity==0 ) ? true : false;
+  LARCV_INFO() << "Run runInfill_cpu" << std::endl;
+
+  std::vector< std::vector<int> > used_vv; // leave empty to indicate all crops to be run
+  used_vv.clear();
+
+  if ( _infill_limit_crops_to_croi ) {
+    
+    used_vv.resize( adc_crops_vv.size() );
+
+    for ( size_t p=0; p<adc_crops_vv.size(); p++ ) {
+
+      auto& sparse_input_v = adc_crops_vv[p];
+      std::vector<int>& used_v = used_vv[p];
+      used_v.resize( sparse_input_v.size(), 0 );
+
+      for ( size_t iimg=0; iimg<sparse_input_v.size(); iimg++ ) {
+	auto& sparseimg = sparse_input_v[iimg];
+	auto& sparsemeta = sparseimg.meta(0);
+
+	double pt[4][2] = { {sparsemeta.min_x(), sparsemeta.min_y()},
+			    {sparsemeta.min_x(), sparsemeta.max_y()},
+			    {sparsemeta.max_x(), sparsemeta.min_y()},
+			    {sparsemeta.max_x(), sparsemeta.max_y()} };
+	
+	// test against the crois
+	bool contains = false;
+	for ( auto const& croi : croi_v ) {
+	  // test if any of the four corners of the meta is in the croi's meta
+	  for (int i=0; i<4; i++ ) {
+	    if ( croi.BB(p).contains( (float)pt[i][0], (float)pt[i][1] ) ) {
+	      contains = true;
+	      break;
+	    }
+	  }
+	  if ( contains )
+	    break;
+	}//end of croi loop
+	
+	if ( contains )
+	  used_v[iimg] = 1;
+	
+      }//end of split image loop
+
+      
+    }// end of plane loop
+
+  }//end of limit to croi option
 
   _sparseinfill_script->run_sparse_cropped_infill( adc_crops_vv,
 						   run, subrun, event,
+						   used_vv,
 						   results_vv,
 						   debug );
 
-  
   return 0;
 }
   
@@ -2210,11 +2431,16 @@ int DLInterface::runSparseSSNet_cpu( const int run, const int subrun, const int 
   
   bool debug  = ( _verbosity==0 ) ? true : false;
 
+
+  // whole image processing
   _sparsessnet_script->run_sparse_ssnet( sparse_input_vv,
 					 run, subrun, event,
+					 //sparse_input_vv.front().front().meta(0).rows(),
+					 1024,
+					 sparse_input_vv.front().front().meta(0).cols(),
 					 results_vv,
 					 debug );
-  
+
   return 0;
 }
 
@@ -2260,6 +2486,13 @@ void DLInterface::beginJob()
     _sparseinfill_script = new ubcv::ubdlintegration::PyNetSparseInfill(  _sparseinfill_weight_file_v );
   }
 
+  // python script interface for sparse ssnet
+  _sparsessnet_script = nullptr;
+  if ( _sparse_ssnet_mode==kPyTorchCPU ) {
+    _sparsessnet_script = new ubcv::ubdlintegration::PyNetSparseSSNet(  _sparsessnet_weight_file_v );
+  }
+
+
 }
 
 /**
@@ -2281,6 +2514,9 @@ void DLInterface::endJob()
 
   if ( _sparseinfill_script )
     delete _sparseinfill_script;
+
+  if ( _sparsessnet_script )
+    delete _sparsessnet_script;
     
 }
 
@@ -2293,20 +2529,12 @@ void DLInterface::endJob()
 void DLInterface::loadNetwork_PyTorchCPU() {
 #ifdef HAS_TORCH
   _module_ubssnet.clear();
-  for ( size_t iscript=0; iscript<_pytorch_net_script.size(); iscript++ ) {
+  for ( size_t iscript=0; iscript<_mcc8_ssnet_script.size(); iscript++ ) {
     std::cout << "Loading network[" << iscript << "] from " 
-	      << _pytorch_net_script[iscript] << " .... " << std::endl;
-    
-    std::string scriptpath;
-    cet::search_path finder("FHICL_FILE_PATH");
-    if( !finder.find_file(_pytorch_net_script[iscript], scriptpath) )
-      throw cet::exception("DLInterface") << "Unable to find torch script in "  << finder.to_string() << "\n";
-    std::cout << "LOADING pytorch model data: " << scriptpath << std::endl;
-
-    _module_ubssnet.push_back( torch::jit::load( scriptpath ) );
-
+	      << _mcc8_ssnet_script[iscript] << " .... " << std::endl;
+    _module_ubssnet.push_back( torch::jit::load( _mcc8_ssnet_script[iscript] ) );
   }
-  std::cout << "Networks Loaded" << std::endl;
+  std::cout << "MCC8 Dense SSNet Networks Loaded" << std::endl;
 #endif
 }
 

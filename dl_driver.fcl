@@ -6,34 +6,65 @@ BEGIN_PROLOG
 
 DLInterface: {
   module_type:         "DLInterface"
+  Verbosity:           0
   WireProducerName:    "butcher"
   OutputProducerName:  "ssnet"
-  PixelThresholdsForSavedScoresPerPlane: [5.0,5.0,5.0]
-  #NetInterface:       "DummyServer"
-  #NetInterface:        "PyTorchCPU"
-  NetInterface:        "Server"
+  larliteOutputFile:   "larlite_larflow.root"
+
   SuperaConfigFile:    "supera_ssnetinterface.fcl"
-  PyTorchNetScript:    ["/uboone/app/users/tmw/dl_model_files/ubssnet/mcc8_caffe_ubssnet_plane0.pytorchscript",
-                        "/uboone/app/users/tmw/dl_model_files/ubssnet/mcc8_caffe_ubssnet_plane1.pytorchscript",
-                        "/uboone/app/users/tmw/dl_model_files/ubssnet/mcc8_caffe_ubssnet_plane2.pytorchscript"]
-  CroppingMethod:      "FlashCROI"
+  PixelThresholdsForSavedScoresPerPlane: [10.0,10.0,10.0]
+  DoWholeImageCrop:    true
+  DoFlashROICrop:      true
   OpFlashProducerName: "simpleFlashBeam"
+  SSNetCropMethod:     "FlashCROI"
+  UBCropConfig:        "ubcrop.fcl"
   SaveDetsplitImagesInput:     false
   SaveNetOutSplitImagesOutput: false
+
+  SSNetMode:           "DoNotRun"
+  LArFlowMode:         "DoNotRun"
+  InfillMode:          "PyTorchCPU"
+  CosmicMRCNNMode:     "PyTorchCPU"
+  SparseSSNetMode:     "PyTorchCPU"
+
   ServerConfiguration: {
-      UseSSHtunnel: false
-      SSHAddress: ""
-      SSHUsername: "twongj01"
-      BrokerAddress: "tcp://nudot.lns.mit.edu"
-      BrokerPort: "6000"
+    BrokerAddress: "tcp://nudot.lns.mit.edu"
+    BrokerPort: "6000"
+    RequestTimeoutSecs: 300
+    RequestMaxTries: 3
+    MaxBrokerReconnects: 3
   }
+    
+  MCC8SSNetScript: ["mcc8_caffe_ubssnet_plane0.pytorchscript",
+                    "mcc8_caffe_ubssnet_plane1.pytorchscript",
+                    "mcc8_caffe_ubssnet_plane2.pytorchscript"]
+
+  CosmicMRCNN_WeightFiles: ["mcc8_mrcnn_plane0_weightsonly.pt",
+                            "mcc8_mrcnn_plane1_weightsonly.pt",
+                            "mcc8_mrcnn_plane2_weightsonly.pt"]
+
+  CosmicMRCNN_ConfigFiles: ["mills_config_0.yaml",
+                            "mills_config_1.yaml",
+                            "mills_config_2.yaml"]
+
+  SparseInfill_WeightFiles: ["sparseinfill_uplane_test.tar",
+                             "sparseinfill_vplane_test.tar",
+                             "sparseinfill_yplane_test.tar"]
+  SparseInfillOnlyCROI: true
+  InfillCropConfig:     "infill_split.fcl"
+
+  SparseSSNet_WeightFiles: ["sparse_uresnet_plane0_16filter_6layers_22999.ckpt",
+                            "sparse_uresnet_plane1_16filter_6layers_31999.ckpt",
+                            "sparse_uresnet_plane2_16filter_6layers_36999.ckpt"]
+
+
 }
 
 UBDLIntegration: @local::DLInterface
 
 END_PROLOG
 
-process_name: SSNet
+process_name: DLDeploy
 
 services:
 {
@@ -42,7 +73,8 @@ services:
   MemoryTracker:           @local::microboone_memory_tracker
   #message:                 @local::microboone_message_services_prod_debug
   #FileCatalogMetadata:     @local::art_file_catalog_mc
-  @table::microboone_services
+  #@table::microboone_services
+  @table::microboone_services_reco
   TFileService: { fileName: "mc_hist.root" }  
 }
 
@@ -56,6 +88,8 @@ services.DetectorClocksService.InheritClockConfig:    false
 services.DetectorClocksService.TriggerOffsetTPC:      -0.400e3
 services.SpaceCharge.EnableSimSpatialSCE: true
 services.SpaceCharge.EnableSimEfieldSCE:  true
+services.LLMetaMaker: {Enable: false}
+services.LArCVMetaMaker: {Enable: false}
 
 #services.FileCatalogMetadata.applicationVersion: "develop"
 #services.FileCatalogMetadata.fileType: "mc"
@@ -88,18 +122,26 @@ physics:
 {
  producers: {
    @table::dlprod_producers
-   ssnet: @local::UBDLIntegration   
+   ubdl: @local::UBDLIntegration   
  }
 
  filters: {}
 
- analyzers: {}
+ analyzers: {
+   @table::dlprod_analyzers
+ }
 
- ssnetpath: [ssnet]
- stream: [out1]
+ dlnetpath: [ubdl]
+ stream: [opreco, reco2d, out1]
  end_paths: [stream]
- trigger_paths: [ ssnetpath ]
+ trigger_paths: [ dlnetpath ]
 }
+
+# configure larlite
+# DATA
+#physics.analyzers.opreco.trigger: ["daq"]
+# MC
+physics.analyzers.opreco.trigger: ["triggersim"]
 
 outputs:
 {
@@ -107,7 +149,7 @@ outputs:
  {
    module_type: RootOutput
    fileName:    "out_larsoft.root" #default file name, can override from command line with -o or --output
-   dataTier:    "larlite"
+   dataTier:    "larcv"
    compressionLevel: 1
  }
 }

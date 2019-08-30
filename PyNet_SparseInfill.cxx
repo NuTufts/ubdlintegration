@@ -62,10 +62,13 @@ namespace ubdlintegration {
 
   int PyNetSparseInfill::run_sparse_cropped_infill( const std::vector< std::vector<larcv::SparseImage> >& cropped_vv, 
                                                     const int run, const int subrun, const int event,
+						    const std::vector< std::vector<int> >& use_vv,
                                                     std::vector<std::vector<larcv::SparseImage> >& results_vv,
                                                     bool debug ) {
 
     results_vv.clear();
+
+    bool runall = (use_vv.size()==0 ) ? true : false;
     
     // for each plane:
     //   make a vector of bsons
@@ -77,24 +80,50 @@ namespace ubdlintegration {
       
       auto const& cropped_v  = cropped_vv.at(planeid);
 
+      // first 
+      int nimages = 0;
+      if ( runall ) {
+	nimages = (int)cropped_v.size();
+      }
+      else {
+	for ( auto const& use : use_vv[planeid] ) {
+	  if ( use==1 )
+	    nimages++;
+	}
+      }
+
       // create list to fill
-      PyObject* pList = PyList_New( (Py_ssize_t)cropped_v.size() );
+      PyObject* pList = PyList_New( (Py_ssize_t)nimages );
 
       // fill list with bson objects
+      int nsent = 0;
       for ( size_t idx=0; idx<cropped_v.size(); idx++ ) {
+
+	if ( !runall && use_vv.at(planeid).at(idx)==0 ) {
+	  // do not use
+	  continue;
+	}
         
         const larcv::SparseImage& spimg = cropped_v.at(idx);
         PyObject* bson = larcv::json::as_bson_pybytes( spimg, run, subrun, event, idx );
 	std::cout << "  [" << idx << "] add cropped image into python list" << std::endl;
 
         // set item for previously unitialized list
-        PyList_SET_ITEM(pList, (Py_ssize_t)idx, bson );
+        PyList_SET_ITEM(pList, (Py_ssize_t)nsent, bson );
+	nsent++;
         // if ( status==-1 ) {
         //   throw std::runtime_error("[PyNetSparseInfill] trouble setting item for input bson list");
         // }
       }
-      std::cout << "[PyNetSparseInfill] filled bson list plane[" << planeid << "] size=" << PyList_Size(pList) << std::endl;
-
+      std::cout << "[PyNetSparseInfill] filled bson list plane[" << planeid << "] "
+		<< "size=" << PyList_Size(pList) 
+		<< " of " << cropped_v.size() << " total"
+		<< " and " << nimages << " to send"
+		<< std::endl;
+      if ( nsent!=nimages ) {
+	throw std::runtime_error( "number of images sent is not the number expected" );
+      }
+      
       PyObject *pWeightpath   = PyString_FromString( _weight_file_v.at( planeid ).c_str() );
       
       std::cout << "[PyNetSparseInfill] call function: " << pFunc << " weight=" << PyString_AsString( pWeightpath ) << std::endl;
@@ -108,6 +137,9 @@ namespace ubdlintegration {
       auto nout = PyList_Size(pReturn);
       
       std::cout << "Number of masks returned from python: " << nout << std::endl;
+      if ( (int)nout!=nsent ) {
+	throw std::runtime_error("Number returned not the same as sent!");
+      }
       std::vector<larcv::SparseImage> out_v;
       for (int iout=0; iout<(int)nout; iout++ ) {
 	PyObject* sparseimg_bson = PyList_GetItem(pReturn,(Py_ssize_t)iout);

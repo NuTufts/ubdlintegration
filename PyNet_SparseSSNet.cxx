@@ -19,13 +19,13 @@ namespace ubdlintegration {
     larcv::SetPyUtil();
 
     std::cout << "[PyNetSparseSSNet] import script" << std::endl;      
-    PyObject *pName   = PyUnicode_FromString("Infill_ForwardPass");
+    PyObject *pName   = PyUnicode_FromString("inference_sparse_ssnet");
     pModule = PyImport_Import(pName);
     if ( !pModule ) {
-      throw std::runtime_error("failed to import import module 'Infill_ForwardPass'");
+      throw std::runtime_error("failed to import import module 'inference_sparse_ssnet'");
     }
     else {
-      std::cout << "[PyNetSparseSSNet] loaded Infill_ForwardPass module" << std::endl;
+      std::cout << "[PyNetSparseSSNet] loaded inference_sparse_ssnet module" << std::endl;
     }
 
     pFunc   = PyObject_GetAttrString(pModule,"forwardpass");
@@ -62,6 +62,7 @@ namespace ubdlintegration {
 
   int PyNetSparseSSNet::run_sparse_ssnet( const std::vector< std::vector<larcv::SparseImage> >& cropped_vv, 
 					  const int run, const int subrun, const int event,
+					  const int nrows, const int ncols,
 					  std::vector<std::vector<larcv::SparseImage> >& results_vv,
 					  bool debug ) {
 
@@ -97,13 +98,17 @@ namespace ubdlintegration {
 
       PyObject *pWeightpath = PyString_FromString( _weight_file_v.at( planeid ).c_str() );
       PyObject* pPlaneID    = PyInt_FromLong( (long)planeid ); 
+      PyObject* pNROWS      = PyInt_FromLong( (long)nrows ); 
+      PyObject* pNCOLS      = PyInt_FromLong( (long)ncols ); 
       
-      std::cout << "[PyNetSparseSSNet] call function: " << pFunc << " weight=" << PyString_AsString( pWeightpath ) << std::endl;
-      PyObject *pReturn = PyObject_CallFunctionObjArgs(pFunc,pPlaneID,pList,pWeightpath,NULL);
+      std::cout << "[PyNetSparseSSNet] call function: " << pFunc 
+		<< " weight=" << PyString_AsString( pWeightpath ) 
+		<< std::endl;
+      PyObject *pReturn = PyObject_CallFunctionObjArgs(pFunc,pPlaneID,pNROWS,pNCOLS,pList,pWeightpath,NULL);
       std::cout << "python returned: " << pReturn << std::endl;
       
       if (!PyList_Check(pReturn)) {
-	throw std::runtime_error("Return from pynet_deploy.inference_mrcnn.forwardpass was no a list");
+	throw std::runtime_error("Return from pynet_deploy.inference_sparse_ssnet.forwardpass was no a list");
       }
       
       auto nout = PyList_Size(pReturn);
@@ -124,6 +129,9 @@ namespace ubdlintegration {
       
       std::cout << "dereference string arguments/paths" << std::endl;
       Py_DECREF(pWeightpath);
+      Py_DECREF(pPlaneID);
+      Py_DECREF(pNROWS);
+      Py_DECREF(pNCOLS);
       Py_DECREF(pPlaneID);
       Py_DECREF(pReturn);
       Py_DECREF(pList);
